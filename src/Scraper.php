@@ -6,6 +6,7 @@ use Symfony\Component\DomCrawler\Crawler;
 use EduLazaro\Larascraper\Runners\PuppeteerRunner;
 use ReflectionMethod;
 use LogicException;
+use Throwable;
 
 abstract class Scraper
 {
@@ -20,6 +21,10 @@ abstract class Scraper
     public bool $success = false;
     public int $status = 0;
     public ?string $error = null;
+    public ?string $html = null;
+
+    protected int $maxRetries = 3;
+    protected int $retryDelay = 15;
 
     /**
      * Create a new scraper instance for the given URL.
@@ -63,6 +68,20 @@ abstract class Scraper
         return $this;
     }
 
+
+    /**
+     * Set retry attempts and delay
+     * 
+     * @param int $attempts The times to retry
+     * @param int $seconds The time between attempts
+     */
+    public function retry(int $attempts, int $seconds): static
+    {
+        $this->maxRetries = $attempts;
+        $this->retryDelay = $seconds;
+        return $this;
+    }
+
     /**
      * Run the scraper and return parsed data.
      * 
@@ -71,28 +90,60 @@ abstract class Scraper
      */
     public function run(mixed ...$params): mixed
     {
-        $runner = PuppeteerRunner::on($this->url)
-            ->timeout($this->timeout)
-            ->withHeaders($this->headers);
-
-        if ($this->proxy) {
-            $runner->proxy($this->proxy);
+        if (!method_exists($this, 'handle')) {
+            throw new LogicException("The scraper class " . static::class . " must implement a `handle` method.");
         }
 
-        if ($this->proxyUser && $this->proxyPass) {
-            $runner->authenticate($this->proxyUser, $this->proxyPass);
+        $attempt = 0;
+        $response = [];
+
+        while (++$attempt <= $this->maxRetries) {
+            echo ("GETTING: {$this->url} (Attempt #{$attempt})\n");
+
+            try {
+
+                $runner = PuppeteerRunner::on($this->url)
+                    ->timeout($this->timeout)
+                    ->withHeaders($this->headers);
+
+                if ($this->proxy) {
+                    $runner->proxy($this->proxy);
+                }
+
+                if ($this->proxyUser && $this->proxyPass) {
+                    $runner->authenticate($this->proxyUser, $this->proxyPass);
+                }
+
+                $response = $runner->run();
+
+                $this->status = $response['status'] ?? 0;
+                $this->success = $response['success'] ?? false;
+                $this->error = $response['error'] ?? null;
+                $this->html = $response['html'] ?? null;
+
+
+                if ($this->success) {
+                    break;
+                }
+
+                echo ("Error getting {$this->url} on attempt #{$attempt}: {$this->status}\n");
+
+                if (!in_array($this->status, [408, 429, 500, 502, 503, 504])) {
+                    break;
+                }
+
+            } catch (Throwable $e) {
+                echo ("Error getting {$this->url} on attempt #{$attempt}: {$e->getMessage()}\n");
+
+                $this->error = $e->getMessage();
+                $this->success = false;
+            }
+
+            if ($attempt < $this->maxRetries) {
+                echo ("Retrying in {$this->retryDelay} seconds...\n");
+                sleep($this->retryDelay);
+            }
         }
-
-
-
-        $response = $runner->run();
-
-        print_r($response['html']);
-
-
-        $this->status = $response['status'] ?? 0;
-        $this->success = $response['success'] ?? false;
-        $this->error = $response['error'] ?? null;
 
         $this->crawler = new Crawler($response['html'] ?? '');
 
@@ -108,10 +159,6 @@ abstract class Scraper
             $params = $paramNames;
         }
 
-        if (method_exists($this, 'handle')) {
-            return $this->handle(...$params);
-        }
-
-        throw new LogicException("The action class " . static::class . " must implement a `action` method.");
+        return $this->handle(...$params);
     }
 }
