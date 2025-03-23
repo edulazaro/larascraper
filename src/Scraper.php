@@ -17,6 +17,10 @@ abstract class Scraper
     protected int $timeout = 20000;
     protected Crawler $crawler;
 
+    public bool $success = false;
+    public int $status = 0;
+    public ?string $error = null;
+
     /**
      * Create a new scraper instance for the given URL.
      *
@@ -79,9 +83,18 @@ abstract class Scraper
             $runner->authenticate($this->proxyUser, $this->proxyPass);
         }
 
-        $html = $runner->run();
 
-        $this->crawler = new Crawler($html);
+
+        $response = $runner->run();
+
+        print_r($response['html']);
+
+
+        $this->status = $response['status'] ?? 0;
+        $this->success = $response['success'] ?? false;
+        $this->error = $response['error'] ?? null;
+
+        $this->crawler = new Crawler($response['html'] ?? '');
 
         if (array_key_first($params) == 0) {
 

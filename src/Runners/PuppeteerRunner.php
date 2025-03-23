@@ -85,7 +85,7 @@ class PuppeteerRunner
      * @throws Exception If the scraper returns an error.
      * @return string The HTML content.
      */
-    public function run(): string
+    public function run(): array
     {
         $script = __DIR__ . '/../../resources/scraper.cjs';
 
@@ -111,19 +111,38 @@ class PuppeteerRunner
         }
 
         $cmd = 'node ' . escapeshellcmd($script) . ' ' . implode(' ', $args);
-
         $output = shell_exec($cmd);
 
         if (is_null($output)) {
             throw new Exception('Scraper failed to return any output.');
         }
-        
-        $result = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
 
-        if (isset($result['error'])) {
-            throw new Exception('Scraper error: ' . $result['error']);
+        if (is_null($output)) {
+            return [
+                'success' => false,
+                'status' => 500,
+                'html' =>  null,
+                'error' => 'Scraper failed to return any output.',
+            ];
         }
 
-        return $result['html'] ?? '';
+        $result = json_decode($output, true, 512, JSON_THROW_ON_ERROR);
+
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return [
+                'success' => false,
+                'status' => 500,
+                'html' =>  null,
+                'error' => 'Invalid JSON output from scraper.',
+            ];
+        }
+
+        return [
+            'success' => $result['success'] ?? false,
+            'status' => $result['status'] ?? 500,
+            'html'    => $result['html'] ?? '',
+            'error'   => $result['error'] ?? null,
+        ];
     }
 }

@@ -65,19 +65,29 @@ try {
 
         const status = response?.status?.() ?? 0;
 
-        if (status === 404) {
-            console.error(JSON.stringify({ status: 404 }));
-            process.exit(1);
+        if (status >= 400) {
+            console.log(JSON.stringify({
+                success: false,
+                status: status,
+                error: `HTTP error: ${status}`
+            }));
+        } else {
+            const content = await page.content();
+            console.log(JSON.stringify({
+                success: true,
+                status: status,
+                html: content
+            }));
         }
-
-        const content = await page.content();
-        console.log(JSON.stringify({ status, html: content }));
-
         await browser.close();
     } catch (error) {
-        console.error(JSON.stringify({ error: error.message }));
-        if (browser) await browser.close();
-        process.exit(1);
+        console.log(JSON.stringify({
+            success: false,
+            status: 500,
+            error: error.message
+        }));
+
+        await browser.close();
     } finally {
         if (browser) {
             await browser.close();
