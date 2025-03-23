@@ -128,6 +128,16 @@ To append custom headers:
 ])
 ```
 
+## Retry logic
+
+You can add the number of attempts and the number of seconds to wait between attempts:
+
+```php
+->retry(3, 5)
+```
+
+Retry 3 times and wait 5 seconds betwee attempts. Please note only the error codes 408, 429, 500, 502, 503 and 504 will be retried.
+
 ## Artisan Commands
 
 You can generate a scraper instance with:
