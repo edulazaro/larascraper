@@ -4,6 +4,8 @@ namespace EduLazaro\Larascraper;
 
 use Symfony\Component\DomCrawler\Crawler;
 use EduLazaro\Larascraper\Runners\PuppeteerRunner;
+use ReflectionMethod;
+use LogicException;
 
 abstract class Scraper
 {
@@ -13,6 +15,7 @@ abstract class Scraper
     protected ?string $proxyPass = null;
     protected array $headers = [];
     protected int $timeout = 20000;
+    protected Crawler $crawler;
 
     /**
      * Create a new scraper instance for the given URL.
@@ -58,8 +61,11 @@ abstract class Scraper
 
     /**
      * Run the scraper and return parsed data.
+     * 
+     * @param array $params The attributes to validate and execute.
+     * @return mixed
      */
-    public function run(): array
+    public function run(mixed ...$params): mixed
     {
         $runner = PuppeteerRunner::on($this->url)
             ->timeout($this->timeout)
@@ -75,13 +81,24 @@ abstract class Scraper
 
         $html = $runner->run();
 
-        $crawler = new Crawler($html);
+        $this->crawler = new Crawler($html);
 
-        return $this->handle($crawler);
+        if (array_key_first($params) == 0) {
+
+            $reflection = new ReflectionMethod($this, 'handle');
+            $paramNames = [];
+
+            foreach ($reflection->getParameters() as $index => $param) {
+                $paramNames[$param->getName()] = $params[$index] ?? null;
+            }
+
+            $params = $paramNames;
+        }
+
+        if (method_exists($this, 'handle')) {
+            return $this->handle(...$params);
+        }
+
+        throw new LogicException("The action class " . static::class . " must implement a `action` method.");
     }
-
-    /**
-     * You must override this in the concrete scraper.
-     */
-    abstract protected function handle(Crawler $crawler): array;
 }

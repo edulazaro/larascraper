@@ -3,14 +3,13 @@
 namespace {{ namespace }};
 
 use EduLazaro\Larascraper\Scraper;
-use Symfony\Component\DomCrawler\Crawler;
 
 class {{ class }} extends Scraper
 {
-    protected function handle(Crawler $crawler): array
+    protected function handle(): array
     {
         return [
-            'title' => $crawler->filter('title')->text() ?? null,
+            'title' => $this->crawler->filter('title')->text() ?? null,
         ];
     }
 }

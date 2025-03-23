@@ -43,14 +43,13 @@ This generates a file like:
 namespace App\Scrapers;
 
 use EduLazaro\Larascraper\Scraper;
-use Symfony\Component\DomCrawler\Crawler;
 
 class BikeScraper extends Scraper
 {
-    protected function handle(Crawler $crawler): array
+    protected function handle(): array
     {
         return [
-            'title' => $crawler->filter('title')->text('')
+            'title' => $this->crawler->filter('title')->text('')
         ];
     }
 }
@@ -68,6 +67,32 @@ $data = BikeScraper::scrape('https://whatever.com/bikes/4')
     ->run();
 
 dd($data);
+```
+
+You can pass parameters to the `run` method as long as they are handled:
+
+```php
+namespace App\Scrapers;
+
+use EduLazaro\Larascraper\Scraper;
+
+class BikeScraper extends Scraper
+{
+    protected function handle(string $name): array
+    {
+        return [
+            'title' => $this->crawler->filter($name)->text('')
+        ];
+    }
+}
+```
+
+And then you can do:
+
+```php
+use App\Scrapers\BikeScraper;
+
+BikeScraper::scrape('https://whatever.com/bikes/4')->run(name: 'title');
 ```
 
 ## Proxy Support
