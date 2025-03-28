@@ -3,6 +3,7 @@
 namespace EduLazaro\Larascraper\Runners;
 
 use Exception;
+use RuntimeException;
 
 /**
  * Run a Puppeteer scraper using a Node script.
@@ -110,7 +111,9 @@ class PuppeteerRunner
             $args[] = '--headers=' . escapeshellarg($jsonHeaders);
         }
 
-        $cmd = 'node ' . escapeshellcmd($script) . ' ' . implode(' ', $args);
+        $nodeBinary = $this->getNodeBinary();
+
+        $cmd = escapeshellcmd($nodeBinary) . ' ' . escapeshellcmd($script) . ' ' . implode(' ', $args);
         $output = shell_exec($cmd);
 
         if (is_null($output)) {
@@ -144,5 +147,25 @@ class PuppeteerRunner
             'html'    => $result['html'] ?? '',
             'error'   => $result['error'] ?? null,
         ];
+    }
+    
+    /**
+     * Get node binary.
+     * 
+     * @return string
+     */
+    private function getNodeBinary(): string
+    {
+        $nodeBinary = trim(shell_exec('which node'));
+
+        if (empty($nodeBinary) || !is_executable($nodeBinary)) {
+            $nodeBinary = trim(shell_exec('bash -l -c "which node"')) ?: 'node';
+        }
+        
+        if ($nodeBinary !== 'node' && !is_executable($nodeBinary)) {
+            throw new RuntimeException("Node binary not found or not executable: {$nodeBinary}");
+        }
+
+        return $nodeBinary;
     }
 }
