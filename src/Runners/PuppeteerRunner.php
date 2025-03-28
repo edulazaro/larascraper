@@ -113,7 +113,7 @@ class PuppeteerRunner
 
         $nodeBinary = $this->getNodeBinary();
 
-        $cmd = escapeshellcmd($nodeBinary) . ' ' . escapeshellcmd($script) . ' ' . implode(' ', $args);
+        $cmd = escapeshellarg($nodeBinary) . ' ' . escapeshellarg($script) . ' ' . implode(' ', $args);
         $output = shell_exec($cmd);
 
         if (is_null($output)) {
