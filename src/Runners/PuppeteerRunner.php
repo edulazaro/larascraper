@@ -156,16 +156,18 @@ class PuppeteerRunner
      */
     private function getNodeBinary(): string
     {
-        $nodeBinary = trim(shell_exec('which node'));
-
-        if (empty($nodeBinary) || !is_executable($nodeBinary)) {
-            $nodeBinary = trim(shell_exec('bash -l -c "which node"')) ?: 'node';
-        }
+        $whichNode = trim(shell_exec('which node'));
         
+        if (!empty($whichNode) && (is_executable($whichNode) || strtoupper(substr(PHP_OS, 0, 3)) === 'WIN')) {
+            return 'node';
+        }
+    
+        $nodeBinary = trim(shell_exec('bash -l -c "which node"')) ?: 'node';
+    
         if ($nodeBinary !== 'node' && !is_executable($nodeBinary)) {
             throw new RuntimeException("Node binary not found or not executable: {$nodeBinary}");
         }
-
+    
         return $nodeBinary;
     }
 }
