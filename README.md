@@ -27,6 +27,9 @@ npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
 
 These packages are required for the internal Puppeteer script to run.
 
+
+Please note that when you run the scraper via a scheduled task, chances are a non interactive terminal is used. Usually Node will be available, but it may not be the case when installing Node via NVM. In this scenario, check the **issues** section at the end.
+
 ## Basic Usage
 
 
@@ -166,3 +169,34 @@ And the running:
 $data = \App\Scrapers\TestScraper::scrape('https://whatever.com')->run();
 dd($data);
 ```
+
+## Issues
+
+This section contains common configuration issues.
+
+### Using Node via NVM
+
+If you use Node via NVM and you try to run the scraper via a scheduled task, chances are Node is not available. To make it available, edit your **bash_profile** with an editor like Vi, Vim or Nano:
+
+```
+nano ~/.bash_profile
+```
+
+Then make sure this is included at the top:
+
+```
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+```
+
+Save the file and run:
+
+```
+source ~/.bash_profile
+```
+
+Now Node will be available for non interative terminals and the scraping process should run successfully.
+
+In general, it's not recommended the usage of NVM on production environments.
+
