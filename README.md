@@ -209,6 +209,24 @@ List all scrapers in app/Scrapers directory:
 php artisan list:scrapers
 ```
 
+## LaraClaude integration
+
+Larascraper is supported by [LaraClaude](https://github.com/edulazaro/laraclaude), a Laravel toolkit plugin for [Claude Code](https://claude.ai/code). It ships a `/lc:generate-scraper` skill that builds scrapers for you:
+
+```
+/lc:generate-scraper BikeScraper https://shop.com/bikes
+```
+
+Given a name and a target URL, the skill:
+
+- Checks that Larascraper (and the Node/Puppeteer side) is installed.
+- Reads the installed `Scraper` API so it only uses methods your version actually has.
+- Generates the class with `make:scraper` and fills `handle()` from the **real** page markup (not guesses).
+- Wires up the right [actions](#interacting-with-the-page-actions) when the page needs interaction (cookie walls, search forms, pagination, infinite scroll).
+- Runs the scraper once to confirm the fields come back populated.
+
+Install the plugin in Claude Code with `/plugin install github:edulazaro/laraclaude`.
+
 ## Testing a scraper
 
 You can easily test a scraper with Tinker:
