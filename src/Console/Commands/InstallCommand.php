@@ -4,6 +4,9 @@ namespace EduLazaro\Larascraper\Console\Commands;
 
 use Illuminate\Console\Command;
 
+/**
+ * Install the Node packages Puppeteer needs (and optionally publish scraper.cjs).
+ */
 class InstallCommand extends Command
 {
     /** Node packages the bundled scraper.cjs needs to run. */
@@ -19,6 +22,11 @@ class InstallCommand extends Command
 
     protected $description = 'Install Larascraper: install the Node packages Puppeteer needs (and optionally publish scraper.cjs)';
 
+    /**
+     * Publish the script (optional) and install the required Node packages.
+     *
+     * @return int
+     */
     public function handle(): int
     {
         $packages = implode(' ', self::NODE_PACKAGES);

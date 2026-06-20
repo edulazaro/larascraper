@@ -4,8 +4,16 @@ namespace {{ namespace }};
 
 use EduLazaro\Larascraper\Scraper;
 
+/**
+ * Scrapes a page and returns the parsed data.
+ */
 class {{ class }} extends Scraper
 {
+    /**
+     * Parse the fetched page and return the scraped data.
+     *
+     * @return array
+     */
     protected function handle(): array
     {
         return [

@@ -5,6 +5,9 @@ namespace EduLazaro\Larascraper\Console\Commands;
 use Illuminate\Console\GeneratorCommand;
 use Illuminate\Support\Str;
 
+/**
+ * Generate a new Scraper class in app/Scrapers from the package stub.
+ */
 class MakeScraperCommand extends GeneratorCommand
 {
     /**

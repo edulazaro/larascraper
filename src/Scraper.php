@@ -8,6 +8,17 @@ use ReflectionMethod;
 use LogicException;
 use Throwable;
 
+/*
+|--------------------------------------------------------------------------
+| Browser actions
+|--------------------------------------------------------------------------
+| The action methods (click, type, wait, waitForSelector, scroll, ...) build
+| an ordered list that Puppeteer runs in a single browser session, after
+| navigating to the URL and before grabbing the final HTML. The waits happen
+| inside Node (where the page is alive), not in PHP. PHP only describes the
+| recipe.
+*/
+
 abstract class Scraper
 {
     protected string $url;
@@ -82,16 +93,6 @@ abstract class Scraper
         $this->retryDelay = $seconds;
         return $this;
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Browser actions
-    |--------------------------------------------------------------------------
-    | These build an ordered list of actions that Puppeteer runs in a single
-    | browser session, after navigating to the URL and before grabbing the
-    | final HTML. The waits happen inside Node (where the page is alive), not
-    | in PHP. PHP only describes the recipe.
-    */
 
     /**
      * Click an element matching the CSS selector (waits for it first).

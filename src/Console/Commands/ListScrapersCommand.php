@@ -5,11 +5,19 @@ namespace EduLazaro\Larascraper\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 
+/**
+ * List every Scraper class found under app/Scrapers (recursively).
+ */
 class ListScrapersCommand extends Command
 {
     protected $signature = 'list:scrapers';
     protected $description = 'List all registered scrapers, including subfolders';
 
+    /**
+     * Print each scraper class found under app/Scrapers.
+     *
+     * @return void
+     */
     public function handle()
     {
         $scrapersPath = app_path('Scrapers');
