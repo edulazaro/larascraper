@@ -1,3 +1,5 @@
+![Larascraper](art/banner.png)
+
 # Larascraper - A Simple Scraper for Laravel
 
 <p align="center">
