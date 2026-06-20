@@ -17,7 +17,6 @@
   <rect width="1280" height="320" rx="20" fill="url(#bg)"/>
   <rect width="1280" height="320" rx="20" fill="url(#grid)"/>
   <rect width="1280" height="320" rx="20" fill="url(#glow)"/>
-  <rect x="0" y="0" width="8" height="320" fill="#22c55e"/>
 
   <text x="80" y="150" font-family="'DejaVu Sans', Arial, sans-serif" font-size="84" font-weight="800" fill="#ffffff" letter-spacing="-1">Larascraper</text>
   <rect x="84" y="172" width="64" height="6" rx="3" fill="#22c55e"/>
