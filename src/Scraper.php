@@ -4,6 +4,7 @@ namespace EduLazaro\Larascraper;
 
 use Symfony\Component\DomCrawler\Crawler;
 use EduLazaro\Larascraper\Runners\PuppeteerRunner;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 use ReflectionMethod;
 use LogicException;
 use Throwable;
@@ -215,12 +216,12 @@ abstract class Scraper
     }
 
     /**
-     * Run the scraper and return parsed data.
-     * 
-     * @param array $params The attributes to validate and execute.
-     * @return mixed
+     * Run the scraper and return the result (status + parsed data).
+     *
+     * @param mixed ...$params Parameters passed through to handle().
+     * @return ScraperResponse
      */
-    public function run(mixed ...$params): mixed
+    public function run(mixed ...$params): ScraperResponse
     {
         if (!method_exists($this, 'handle')) {
             throw new LogicException("The scraper class " . static::class . " must implement a `handle` method.");
@@ -292,6 +293,14 @@ abstract class Scraper
             $params = $paramNames;
         }
 
-        return $this->handle(...$params);
+        $data = $this->handle(...$params);
+
+        return new ScraperResponse(
+            success: $this->success,
+            status: $this->status,
+            error: $this->error,
+            html: $this->html ?? '',
+            data: $data,
+        );
     }
 }

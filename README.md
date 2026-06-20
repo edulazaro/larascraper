@@ -73,14 +73,30 @@ You can now scrape a URL like this:
 ```php
 use App\Scrapers\BikeScraper;
 
-$data = BikeScraper::scrape('https://whatever.com/bikes/4')
+$result = BikeScraper::scrape('https://whatever.com/bikes/4')
     ->proxy('ip:port', 'username', 'password') // Optional
     ->timeout(10000) // Optional timeout in ms
     ->headers(['Accept-Language' => 'en']) // Optional headers
     ->run();
 
-dd($data);
+if ($result->success) {
+    dd($result->data); // The array returned by handle()
+} else {
+    dd($result->status, $result->error);
+}
 ```
+
+`run()` returns a `ScraperResponse` value object so you can tell a failed fetch from an empty result:
+
+| Property | Description |
+|---|---|
+| `$result->success` | `true` when the page loaded (and any actions ran) without error. |
+| `$result->status` | The HTTP status code. |
+| `$result->error` | The error message when `success` is `false`, otherwise `null`. |
+| `$result->html` | The raw HTML that was fetched. |
+| `$result->data` | Whatever your `handle()` method returned (usually an array). |
+
+> **Upgrading from 1.x:** `run()` used to return the `handle()` value directly. It now returns a `ScraperResponse`; read your parsed data from `$result->data`.
 
 You can pass parameters to the `run` method as long as they are handled:
 
@@ -148,14 +164,16 @@ Sometimes the content you need only appears after interacting with the page: acc
 You can chain **actions** before calling `run()`. They are sent to Puppeteer and executed **in order, in a single browser session**, right after navigation and before the final HTML is captured. The waits happen inside Node (where the page is alive), so timing works naturally:
 
 ```php
-$data = MyScraper::scrape('https://shop.com/search')
+$result = MyScraper::scrape('https://shop.com/search')
     ->click('#accept-cookies')
     ->type('#search', 'zelda')
     ->press('Enter', waitForNavigation: true) // submit + wait for the new page
     ->waitForSelector('.results')
     ->scrollToBottom()                         // trigger lazy loading
     ->wait(800)
-    ->run();                                   // handle() receives the final HTML
+    ->run();                                   // handle() parses the final HTML
+
+$items = $result->data;                        // your handle() result
 ```
 
 ### Available actions
@@ -242,8 +260,8 @@ php artisan tinker
 And the running:
 
 ```php
-$data = \App\Scrapers\TestScraper::scrape('https://whatever.com')->run();
-dd($data);
+$result = \App\Scrapers\TestScraper::scrape('https://whatever.com')->run();
+dd($result->success, $result->data);
 ```
 
 ## Issues

@@ -19,17 +19,22 @@ class ScraperResponse
     /** @var string The fetched HTML (empty on failure). */
     public string $html = '';
 
+    /** @var mixed The parsed data returned by the scraper's handle() method. */
+    public mixed $data = null;
+
     /**
      * @param bool $success Whether the scrape succeeded.
      * @param int $status HTTP status code.
      * @param string|null $error Error message, if any.
      * @param string $html The fetched HTML.
+     * @param mixed $data The parsed data from handle().
      */
-    public function __construct(bool $success = false, int $status = 0, string|null $error = null, string $html = '')
+    public function __construct(bool $success = false, int $status = 0, string|null $error = null, string $html = '', mixed $data = null)
     {
         $this->success = $success ;
         $this->status = $status ;
         $this->error = $error ;
         $this->html = $html ;
+        $this->data = $data ;
     }
 }
