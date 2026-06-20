@@ -5,6 +5,7 @@ namespace EduLazaro\Larascraper;
 use Illuminate\Support\ServiceProvider;
 use EduLazaro\Larascraper\Console\Commands\MakeScraperCommand;
 use EduLazaro\Larascraper\Console\Commands\ListScrapersCommand;
+use EduLazaro\Larascraper\Console\Commands\InstallCommand;
 
 class LarascraperServiceProvider extends ServiceProvider
 {
@@ -24,6 +25,7 @@ class LarascraperServiceProvider extends ServiceProvider
 
             $this->commands([MakeScraperCommand::class]);
             $this->commands([ListScrapersCommand::class]);
+            $this->commands([InstallCommand::class]);
         }
     }
 

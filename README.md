@@ -13,20 +13,27 @@ Unlikely Spatie Crawler, it supports Proxy authentication and in general is fast
 
 ## Install
 
-Run this command via Composer:
+Larascraper needs **two** things: the PHP package (via Composer) and a few Node packages that the internal Puppeteer script relies on. Composer cannot install the Node packages for you, so it's a two step install.
+
+**1. Require the package via Composer:**
 
 ```bash
 composer require edulazaro/larascraper
 ```
 
-Then install the required Node dependencies:
+**2. Install the Node dependencies.** The easiest way is the bundled command:
+
+```bash
+php artisan larascraper:install
+```
+
+This runs `npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth` in your project. If you prefer to do it by hand, run that command yourself:
 
 ```bash
 npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
 ```
 
-These packages are required for the internal Puppeteer script to run.
-
+These packages are required for the internal Puppeteer script to run. If they are missing, the scraper fails fast with a clear message telling you to run `php artisan larascraper:install` (it does **not** fail silently).
 
 Please note that when you run the scraper via a scheduled task, chances are a non interactive terminal is used. Usually Node will be available, but it may not be the case when installing Node via NVM. In this scenario, check the **issues** section at the end.
 
@@ -142,6 +149,17 @@ You can add the number of attempts and the number of seconds to wait between att
 Retry 3 times and wait 5 seconds betwee attempts. Please note only the error codes 408, 429, 500, 502, 503 and 504 will be retried.
 
 ## Artisan Commands
+
+Install the Node dependencies the Puppeteer script needs:
+
+```bash
+php artisan larascraper:install
+```
+
+Options:
+
+- `--publish` also publishes `scraper.cjs` to the project root (so you can customize it).
+- `--no-npm` skips the `npm install` and just prints the command to run.
 
 You can generate a scraper instance with:
 

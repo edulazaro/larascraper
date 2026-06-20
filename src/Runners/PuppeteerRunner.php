@@ -10,12 +10,22 @@ use RuntimeException;
  */
 class PuppeteerRunner
 {
+    /** Node packages the bundled scraper.cjs needs to run. */
+    private const REQUIRED_NODE_PACKAGES = [
+        'puppeteer',
+        'puppeteer-extra',
+        'puppeteer-extra-plugin-stealth',
+    ];
+
+    /** Cache the dependency check so it only runs once per process. */
+    protected static bool $dependenciesVerified = false;
+
     protected string $url;
     protected ?string $proxy = null;
     protected ?string $user = null;
     protected ?string $password = null;
     protected array $headers = [];
-    protected int $timeout = 20000; 
+    protected int $timeout = 20000;
 
     /**
      * Initialize the runner with a target URL.
@@ -113,6 +123,8 @@ class PuppeteerRunner
 
         $nodeBinary = $this->getNodeBinary();
 
+        $this->ensureNodeDependencies($nodeBinary, $script);
+
         $cmd = escapeshellarg($nodeBinary) . ' ' . escapeshellarg($script) . ' ' . implode(' ', $args);
         $output = shell_exec($cmd);
 
@@ -150,8 +162,52 @@ class PuppeteerRunner
     }
     
     /**
+     * Ensure the Node packages required by scraper.cjs are installed.
+     *
+     * scraper.cjs does require('puppeteer-extra') etc., resolving from the
+     * consuming project's node_modules. If they are missing the script fails
+     * with an opaque "no output" error, so we check up front and throw a clear,
+     * actionable message instead. The resolution is anchored at the script via
+     * createRequire so it matches exactly how scraper.cjs resolves at runtime.
+     *
+     * @param string $nodeBinary Resolved node binary.
+     * @param string $script Absolute path to scraper.cjs.
+     * @throws RuntimeException If any required package cannot be resolved.
+     * @return void
+     */
+    private function ensureNodeDependencies(string $nodeBinary, string $script): void
+    {
+        if (static::$dependenciesVerified) {
+            return;
+        }
+
+        $packages = json_encode(self::REQUIRED_NODE_PACKAGES);
+
+        $js = 'const{createRequire}=require("module");'
+            . 'const r=createRequire(' . json_encode($script) . ');'
+            . $packages . '.forEach(p=>r.resolve(p));';
+
+        $cmd = escapeshellarg($nodeBinary) . ' -e ' . escapeshellarg($js) . ' 2>&1';
+
+        exec($cmd, $output, $exitCode);
+
+        if ($exitCode !== 0) {
+            $install = 'npm install ' . implode(' ', self::REQUIRED_NODE_PACKAGES);
+
+            throw new RuntimeException(
+                "Larascraper: the required Node packages are not installed.\n"
+                . "Run:\n    {$install}\n"
+                . "or:\n    php artisan larascraper:install\n"
+                . 'Node error: ' . trim(implode("\n", $output))
+            );
+        }
+
+        static::$dependenciesVerified = true;
+    }
+
+    /**
      * Get node binary.
-     * 
+     *
      * @return string
      */
     private function getNodeBinary(): string
