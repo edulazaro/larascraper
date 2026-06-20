@@ -27,13 +27,16 @@ composer require edulazaro/larascraper
 php artisan larascraper:install
 ```
 
-This runs `npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth` in your project. If you prefer to do it by hand, run that command yourself:
+This installs the Node packages **and** the Chrome binary Puppeteer needs:
 
 ```bash
 npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+npx puppeteer browsers install chrome
 ```
 
-These packages are required for the internal Puppeteer script to run. If they are missing, the scraper fails fast with a clear message telling you to run `php artisan larascraper:install` (it does **not** fail silently).
+Run `php artisan larascraper:install` **in the same environment where the scraper runs** (e.g. inside your Docker/Sail container), so Chrome lands in that environment's cache. The Chrome step matters: when `node_modules` is already present (for example mounted into a container), Puppeteer's automatic Chrome download is skipped, so the command installs it explicitly. If the Node packages are missing the scraper fails fast with a clear message rather than silently.
+
+Use `--no-browser` if you provide your own Chrome via `PUPPETEER_EXECUTABLE_PATH`.
 
 Please note that when you run the scraper via a scheduled task, chances are a non interactive terminal is used. Usually Node will be available, but it may not be the case when installing Node via NVM. In this scenario, check the **issues** section at the end.
 
@@ -196,6 +199,7 @@ Options:
 
 - `--publish` also publishes `scraper.cjs` to the project root (so you can customize it).
 - `--no-npm` skips the `npm install` and just prints the command to run.
+- `--no-browser` skips downloading Chrome (use it when a system Chrome is provided via `PUPPETEER_EXECUTABLE_PATH`).
 
 You can generate a scraper instance with:
 

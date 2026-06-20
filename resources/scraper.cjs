@@ -150,16 +150,14 @@ async function runActions(page, actions, timeout) {
                 html: content
             }));
         }
-        await browser.close();
     } catch (error) {
         console.log(JSON.stringify({
             success: false,
             status: 500,
             error: error.message
         }));
-
-        await browser.close();
     } finally {
+        // browser is undefined if launch() itself failed, so guard the close.
         if (browser) {
             await browser.close();
         }
