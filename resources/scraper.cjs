@@ -26,6 +26,76 @@ try {
     process.exit(1);
 }
 
+let actions = [];
+
+try {
+    actions = args.actions ? JSON.parse(args.actions) : [];
+} catch (e) {
+    console.error(JSON.stringify({ error: 'Invalid actions JSON' }));
+    process.exit(1);
+}
+
+/**
+ * Run an ordered list of browser actions on the page.
+ * Any failure (e.g. a selector that never appears) throws and is reported
+ * back to PHP as { success: false, error }.
+ */
+async function runActions(page, actions, timeout) {
+    for (const action of actions) {
+        switch (action.type) {
+            case 'click':
+                await page.waitForSelector(action.selector, { timeout });
+                if (action.waitForNavigation) {
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle2', timeout }),
+                        page.click(action.selector),
+                    ]);
+                } else {
+                    await page.click(action.selector);
+                }
+                break;
+            case 'type':
+                await page.waitForSelector(action.selector, { timeout });
+                await page.type(action.selector, action.text ?? '');
+                break;
+            case 'select':
+                await page.waitForSelector(action.selector, { timeout });
+                await page.select(action.selector, action.value);
+                break;
+            case 'hover':
+                await page.waitForSelector(action.selector, { timeout });
+                await page.hover(action.selector);
+                break;
+            case 'press':
+                if (action.waitForNavigation) {
+                    await Promise.all([
+                        page.waitForNavigation({ waitUntil: 'networkidle2', timeout }),
+                        page.keyboard.press(action.key),
+                    ]);
+                } else {
+                    await page.keyboard.press(action.key);
+                }
+                break;
+            case 'waitForSelector':
+                await page.waitForSelector(action.selector, { timeout });
+                break;
+            case 'waitForNavigation':
+                await page.waitForNavigation({ waitUntil: 'networkidle2', timeout });
+                break;
+            case 'wait':
+                await new Promise(resolve => setTimeout(resolve, action.ms ?? 0));
+                break;
+            case 'scroll':
+                await page.evaluate((to) => {
+                    window.scrollTo(0, to === 'top' ? 0 : document.body.scrollHeight);
+                }, action.to ?? 'bottom');
+                break;
+            default:
+                throw new Error(`Unknown action type: ${action.type}`);
+        }
+    }
+}
+
 (async () => {
 
     let browser;
@@ -72,6 +142,7 @@ try {
                 error: `HTTP error: ${status}`
             }));
         } else {
+            await runActions(page, actions, timeout);
             const content = await page.content();
             console.log(JSON.stringify({
                 success: true,

@@ -138,6 +138,42 @@ To append custom headers:
 ])
 ```
 
+## Interacting with the page (actions)
+
+Sometimes the content you need only appears after interacting with the page: accepting a cookie banner, filling and submitting a form, paginating, expanding a "show more" section or scrolling to trigger lazy loading.
+
+You can chain **actions** before calling `run()`. They are sent to Puppeteer and executed **in order, in a single browser session**, right after navigation and before the final HTML is captured. The waits happen inside Node (where the page is alive), so timing works naturally:
+
+```php
+$data = MyScraper::scrape('https://shop.com/search')
+    ->click('#accept-cookies')
+    ->type('#search', 'zelda')
+    ->press('Enter', waitForNavigation: true) // submit + wait for the new page
+    ->waitForSelector('.results')
+    ->scrollToBottom()                         // trigger lazy loading
+    ->wait(800)
+    ->run();                                   // handle() receives the final HTML
+```
+
+### Available actions
+
+| Method | Description |
+|---|---|
+| `->click($selector)` | Click an element (waits for it first). |
+| `->click($selector, waitForNavigation: true)` / `->clickAndWait($selector)` | Click that triggers a page load, and wait for it. |
+| `->type($selector, $text)` | Type text into an input (waits for it first). |
+| `->select($selector, $value)` | Choose an option (by value) in a `<select>`. |
+| `->hover($selector)` | Hover over an element. |
+| `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`…). Pass `waitForNavigation: true` when it submits a form. |
+| `->waitForSelector($selector)` | Wait until an element appears (lazy/JS content). |
+| `->waitForNavigation()` | Wait for a navigation to finish. |
+| `->wait($ms)` | Wait a fixed number of milliseconds. |
+| `->scroll('bottom'\|'top')` / `->scrollToBottom()` | Scroll the page (infinite scroll / lazy load). |
+
+If an action fails (for example a selector that never appears within the timeout), the scrape fails cleanly with `success = false` and the error message, just like an HTTP error.
+
+> **Tip:** for a click or key press that loads a new page, use `waitForNavigation: true` on that action (or `clickAndWait()`) rather than a separate `->waitForNavigation()` call. That arms the wait *before* the click, avoiding a race where the navigation finishes before the wait starts.
+
 ## Retry logic
 
 You can add the number of attempts and the number of seconds to wait between attempts:

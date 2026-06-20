@@ -25,6 +25,7 @@ class PuppeteerRunner
     protected ?string $user = null;
     protected ?string $password = null;
     protected array $headers = [];
+    protected array $actions = [];
     protected int $timeout = 20000;
 
     /**
@@ -79,6 +80,18 @@ class PuppeteerRunner
     }
 
     /**
+     * Set the ordered list of browser actions to run after navigation.
+     *
+     * @param array $actions List of action descriptors (type + params).
+     * @return static
+     */
+    public function withActions(array $actions): static
+    {
+        $this->actions = $actions;
+        return $this;
+    }
+
+    /**
      * Set the timeout in milliseconds.
      * 
      * @param int $ms Timeout duration in milliseconds.
@@ -119,6 +132,11 @@ class PuppeteerRunner
         if (!empty($this->headers)) {
             $jsonHeaders = json_encode($this->headers, JSON_THROW_ON_ERROR);
             $args[] = '--headers=' . escapeshellarg($jsonHeaders);
+        }
+
+        if (!empty($this->actions)) {
+            $jsonActions = json_encode($this->actions, JSON_THROW_ON_ERROR);
+            $args[] = '--actions=' . escapeshellarg($jsonActions);
         }
 
         $nodeBinary = $this->getNodeBinary();

@@ -16,6 +16,7 @@ abstract class Scraper
     protected ?string $proxyPass = null;
     protected array $headers = [];
     protected int $timeout = 20000;
+    protected array $actions = [];
     protected Crawler $crawler;
 
     public bool $success = false;
@@ -71,7 +72,7 @@ abstract class Scraper
 
     /**
      * Set retry attempts and delay
-     * 
+     *
      * @param int $attempts The times to retry
      * @param int $seconds The time between attempts
      */
@@ -80,6 +81,136 @@ abstract class Scraper
         $this->maxRetries = $attempts;
         $this->retryDelay = $seconds;
         return $this;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Browser actions
+    |--------------------------------------------------------------------------
+    | These build an ordered list of actions that Puppeteer runs in a single
+    | browser session, after navigating to the URL and before grabbing the
+    | final HTML. The waits happen inside Node (where the page is alive), not
+    | in PHP. PHP only describes the recipe.
+    */
+
+    /**
+     * Click an element matching the CSS selector (waits for it first).
+     *
+     * @param string $selector CSS selector to click.
+     * @param bool $waitForNavigation Set true when the click triggers a page
+     *        load/navigation, so the wait is armed before the click (avoids a
+     *        race). For clicks that only update the DOM, leave it false.
+     */
+    public function click(string $selector, bool $waitForNavigation = false): static
+    {
+        $action = ['type' => 'click', 'selector' => $selector];
+
+        if ($waitForNavigation) {
+            $action['waitForNavigation'] = true;
+        }
+
+        $this->actions[] = $action;
+        return $this;
+    }
+
+    /**
+     * Click an element and wait for the resulting navigation to finish.
+     */
+    public function clickAndWait(string $selector): static
+    {
+        return $this->click($selector, true);
+    }
+
+    /**
+     * Type text into an input matching the CSS selector (waits for it first).
+     */
+    public function type(string $selector, string $text): static
+    {
+        $this->actions[] = ['type' => 'type', 'selector' => $selector, 'text' => $text];
+        return $this;
+    }
+
+    /**
+     * Select an option (by value) on a <select> matching the CSS selector.
+     */
+    public function select(string $selector, string $value): static
+    {
+        $this->actions[] = ['type' => 'select', 'selector' => $selector, 'value' => $value];
+        return $this;
+    }
+
+    /**
+     * Hover over an element matching the CSS selector.
+     */
+    public function hover(string $selector): static
+    {
+        $this->actions[] = ['type' => 'hover', 'selector' => $selector];
+        return $this;
+    }
+
+    /**
+     * Press a keyboard key (e.g. "Enter", "Tab", "Escape").
+     *
+     * @param string $key The key to press.
+     * @param bool $waitForNavigation Set true when the key press submits a form
+     *        / triggers navigation, so the wait is armed before the press.
+     */
+    public function press(string $key, bool $waitForNavigation = false): static
+    {
+        $action = ['type' => 'press', 'key' => $key];
+
+        if ($waitForNavigation) {
+            $action['waitForNavigation'] = true;
+        }
+
+        $this->actions[] = $action;
+        return $this;
+    }
+
+    /**
+     * Wait until an element matching the CSS selector appears in the DOM.
+     */
+    public function waitForSelector(string $selector): static
+    {
+        $this->actions[] = ['type' => 'waitForSelector', 'selector' => $selector];
+        return $this;
+    }
+
+    /**
+     * Wait for a navigation/reload to finish (e.g. after a click or submit).
+     */
+    public function waitForNavigation(): static
+    {
+        $this->actions[] = ['type' => 'waitForNavigation'];
+        return $this;
+    }
+
+    /**
+     * Wait a fixed amount of time, in milliseconds.
+     */
+    public function wait(int $ms): static
+    {
+        $this->actions[] = ['type' => 'wait', 'ms' => $ms];
+        return $this;
+    }
+
+    /**
+     * Scroll the page to the top or bottom (useful for lazy/infinite content).
+     *
+     * @param string $to "bottom" (default) or "top".
+     */
+    public function scroll(string $to = 'bottom'): static
+    {
+        $this->actions[] = ['type' => 'scroll', 'to' => $to];
+        return $this;
+    }
+
+    /**
+     * Convenience alias for scroll('bottom').
+     */
+    public function scrollToBottom(): static
+    {
+        return $this->scroll('bottom');
     }
 
     /**
@@ -104,7 +235,8 @@ abstract class Scraper
 
                 $runner = PuppeteerRunner::on($this->url)
                     ->timeout($this->timeout)
-                    ->withHeaders($this->headers);
+                    ->withHeaders($this->headers)
+                    ->withActions($this->actions);
 
                 if ($this->proxy) {
                     $runner->proxy($this->proxy);
