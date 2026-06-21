@@ -23,18 +23,19 @@ Larascraper needs **two** things: the PHP package (via Composer) and a few Node 
 composer require edulazaro/larascraper
 ```
 
-**2. Install the Node dependencies.** The easiest way is the bundled command:
+**2. Install the Node dependencies.** Just run the bundled command:
 
 ```bash
 php artisan larascraper:install
 ```
 
-This installs the Node packages **and** the Chrome binary Puppeteer needs:
+That single command installs the Node packages **and** the Chrome binary Puppeteer needs. You do **not** need to run anything else.
 
-```bash
-npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
-npx puppeteer browsers install chrome
-```
+> **Prefer to do it by hand?** Then skip the command and run these two yourself instead (this is exactly what `larascraper:install` does for you, not an extra step):
+> ```bash
+> npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
+> npx puppeteer browsers install chrome
+> ```
 
 Run `php artisan larascraper:install` **in the same environment where the scraper runs** (e.g. inside your Docker/Sail container), so Chrome lands in that environment's cache. The Chrome step matters: when `node_modules` is already present (for example mounted into a container), Puppeteer's automatic Chrome download is skipped, so the command installs it explicitly. If the Node packages are missing the scraper fails fast with a clear message rather than silently.
 
