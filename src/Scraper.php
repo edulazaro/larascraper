@@ -278,6 +278,7 @@ abstract class Scraper
             data: $data,
             file: $file,
             contentType: $response['contentType'] ?? null,
+            cookies: $response['cookies'] ?? [],
         );
     }
 

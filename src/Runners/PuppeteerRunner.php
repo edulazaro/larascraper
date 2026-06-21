@@ -236,6 +236,7 @@ class PuppeteerRunner implements Runner
             'error'   => $result['error'] ?? null,
             'file'    => $result['file'] ?? null,          // base64, decoded in Scraper::run()
             'contentType' => $result['contentType'] ?? null,
+            'cookies' => $result['cookies'] ?? [],
         ];
     }
     

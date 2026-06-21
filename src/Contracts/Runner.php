@@ -16,6 +16,7 @@ namespace EduLazaro\Larascraper\Contracts;
  *   - error       ?string   Error message, or null on success.
  *   - file        ?string   Captured binary, base64-encoded, or null.
  *   - contentType ?string   Response Content-Type, or null.
+ *   - cookies     array     Response cookies as a name => value map.
  */
 interface Runner
 {

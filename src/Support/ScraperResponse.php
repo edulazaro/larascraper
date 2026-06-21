@@ -28,6 +28,9 @@ class ScraperResponse
     /** @var string|null The content type of the captured file (e.g. 'application/pdf'). */
     public ?string $contentType = null;
 
+    /** @var array<string, string> Response cookies as a name => value map. */
+    public array $cookies = [];
+
     /**
      * A response carries either `data` (parsed HTML) or `file`/`contentType`
      * (a captured binary), depending on the scrape.
@@ -39,6 +42,7 @@ class ScraperResponse
      * @param mixed $data The parsed data from handle().
      * @param string|null $file Raw bytes of a captured file/binary.
      * @param string|null $contentType Content type of the captured file.
+     * @param array<string, string> $cookies Response cookies (name => value).
      */
     public function __construct(
         bool $success = false,
@@ -48,6 +52,7 @@ class ScraperResponse
         mixed $data = null,
         ?string $file = null,
         ?string $contentType = null,
+        array $cookies = [],
     ) {
         $this->success = $success ;
         $this->status = $status ;
@@ -56,5 +61,6 @@ class ScraperResponse
         $this->data = $data ;
         $this->file = $file ;
         $this->contentType = $contentType ;
+        $this->cookies = $cookies ;
     }
 }

@@ -153,4 +153,16 @@ class HttpRunnerTest extends BaseTestCase
 
         \EduLazaro\Larascraper\Runners\PuppeteerRunner::on('https://example.com')->method('POST');
     }
+
+    public function test_it_returns_response_cookies(): void
+    {
+        Http::fake([
+            '*' => Http::response('ok', 200, ['Set-Cookie' => 'JSESSIONID=abc123; Path=/; HttpOnly']),
+        ]);
+
+        $result = HttpRunner::on('https://api.test/login')->run();
+
+        $this->assertArrayHasKey('cookies', $result);
+        $this->assertSame('abc123', $result['cookies']['JSESSIONID'] ?? null);
+    }
 }

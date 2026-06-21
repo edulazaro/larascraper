@@ -191,6 +191,7 @@ class HttpRunner implements Runner
                 'error' => $response->successful() ? null : "HTTP {$response->status()}",
                 'file' => null,
                 'contentType' => $response->header('Content-Type') ?: null,
+                'cookies' => $this->parseSetCookies($response->headers()['Set-Cookie'] ?? []),
             ];
         } catch (Throwable $e) {
             return [
@@ -200,7 +201,28 @@ class HttpRunner implements Runner
                 'error' => $e->getMessage(),
                 'file' => null,
                 'contentType' => null,
+                'cookies' => [],
             ];
         }
+    }
+
+    /**
+     * Parse Set-Cookie response headers into a name => value map.
+     *
+     * @param array $setCookieLines Raw Set-Cookie header values.
+     * @return array<string, string>
+     */
+    protected function parseSetCookies(array $setCookieLines): array
+    {
+        $cookies = [];
+
+        foreach ($setCookieLines as $line) {
+            // First "name=value" pair of each Set-Cookie line (ignore attributes).
+            if (preg_match('/^\s*([^=;\s]+)=([^;]*)/', (string) $line, $m)) {
+                $cookies[$m[1]] = $m[2];
+            }
+        }
+
+        return $cookies;
     }
 }
