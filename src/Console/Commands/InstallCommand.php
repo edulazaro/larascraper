@@ -16,9 +16,16 @@ class InstallCommand extends Command
         'puppeteer-extra-plugin-stealth',
     ];
 
+    /** Optional Node packages for the OCR captcha solver (only with --captcha). */
+    private const CAPTCHA_PACKAGES = [
+        'tesseract.js',
+        'jimp',
+    ];
+
     protected $signature = 'larascraper:install
         {--no-npm : Skip installing the Node packages, only show the command}
         {--no-browser : Skip downloading the Chrome binary (e.g. when using a system Chrome via PUPPETEER_EXECUTABLE_PATH)}
+        {--captcha : Also install the optional OCR packages (tesseract.js, jimp) for solveCaptcha()}
         {--publish : Also publish scraper.cjs to the project root}';
 
     protected $description = 'Install Larascraper: install the Node packages and the Chrome binary Puppeteer needs (and optionally publish scraper.cjs)';
@@ -57,7 +64,23 @@ class InstallCommand extends Command
             }
         }
 
-        // 2. Chrome binary. Puppeteer needs it, but its postinstall download is
+        // 2. Optional OCR packages for the captcha solver (only with --captcha).
+        //    Kept out of the default install so projects that don't solve
+        //    captchas don't pull tesseract.js + jimp (several MB).
+        if ($this->option('captcha') && !$this->option('no-npm')) {
+            $captcha = implode(' ', self::CAPTCHA_PACKAGES);
+            $this->info("Installing OCR packages for solveCaptcha(): {$captcha}");
+
+            passthru("cd {$base} && npm install {$captcha}", $captchaExit);
+
+            if ($captchaExit !== 0) {
+                $this->error('OCR package install failed. Run it manually:');
+                $this->line("    npm install {$captcha}");
+                return self::FAILURE;
+            }
+        }
+
+        // 3. Chrome binary. Puppeteer needs it, but its postinstall download is
         //    skipped when the packages are already present (e.g. a node_modules
         //    mounted into a container), so install it explicitly here.
         if ($this->option('no-browser')) {

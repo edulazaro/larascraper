@@ -97,6 +97,10 @@ if ($result->success) {
 | `$result->error` | The error message when `success` is `false`, otherwise `null`. |
 | `$result->html` | The raw HTML that was fetched. |
 | `$result->data` | Whatever your `handle()` method returned (usually an array). |
+| `$result->file` | The raw bytes of a captured file/binary (e.g. a PDF), or `null`. See [Downloading files](#downloading-files). |
+| `$result->contentType` | The content type of the captured file (e.g. `application/pdf`). |
+
+A response carries either `data` (parsed HTML) or `file` (a captured binary), depending on the scrape.
 
 > **Upgrading from 1.x:** `run()` used to return the `handle()` value directly. It now returns a `ScraperResponse`; read your parsed data from `$result->data`.
 
@@ -197,6 +201,140 @@ If an action fails (for example a selector that never appears within the timeout
 
 > **Tip:** for a click or key press that loads a new page, use `waitForNavigation: true` on that action (or `clickAndWait()`) rather than a separate `->waitForNavigation()` call. That arms the wait *before* the click, avoiding a race where the navigation finishes before the wait starts.
 
+Every `$selector` is a plain **CSS selector** passed to Puppeteer, so anything CSS supports works: id (`#id`), class (`.class`), and **attribute selectors** including `name`:
+
+```php
+->type('[name=email]', 'me@example.com')      // by name attribute
+->type('input[name=captcha]', $code)          // tag + name
+->click('[name=submit]')
+->select('[name=lang]', 'en')                 // a <select name="lang">
+```
+
+`[name=x]`, `[name="x"]` and `input[name=x]` all work, as do `[data-id=5]`, `[type=submit]`, etc.
+
+## Conditional flow (when / repeatUntil)
+
+The action chain is a little **query builder for the page**: besides the linear actions above, you can branch and loop. The condition is evaluated by Puppeteer against the *live* page at runtime. PHP isn't inside the browser, so you describe *what* to check with the `Condition` helper, and Node does the checking.
+
+**`when()`** runs a branch only if a condition holds. The closure receives a sub-builder (`$b`) you chain actions on, exactly like Laravel's `$query->when($cond, fn ($q) => ...)`:
+
+```php
+use EduLazaro\Larascraper\Support\Condition;
+
+MyScraper::scrape($url)
+    ->when(
+        Condition::selectorExists('#cookie-banner'),
+        fn ($b) => $b->click('#accept-cookies'),  // only if the banner is there
+    )
+    ->run();
+```
+
+The `else` branch is optional (and rarely needed; usually you just continue the main chain afterwards):
+
+```php
+->when(
+    Condition::textContains('No results', '.notice'),
+    fn ($b) => $b->click('#clear-filters'),       // then
+    fn ($b) => $b->waitForSelector('.product'),   // else
+)
+```
+
+**`repeatUntil()`** repeats a branch until a condition holds, for "retry until it works" flows like solving a captcha or paginating. **It is always bounded**: `max` defaults to 5 and is clamped to at least 1 (there is no unbounded mode), and `delay` throttles the time between iterations so you don't hammer a server:
+
+```php
+->repeatUntil(
+    Condition::selectorMissing('#captcha-img'),   // stop once the captcha is gone
+    fn ($b) => $b
+        ->solveCaptcha('#captcha-img', '#captcha-input')
+        ->clickAndWait('#verify'),
+    max: 6,
+    delay: 1500,                                  // wait 1.5s between attempts
+)
+```
+
+### Conditions
+
+Build conditions with the `Condition` helper (each returns the data the Node runner evaluates):
+
+| Condition | True when… |
+|---|---|
+| `Condition::selectorExists($selector)` | an element matching the selector exists |
+| `Condition::selectorMissing($selector)` | no element matching the selector exists |
+| `Condition::textContains($text, $selector = null)` | the text is found (in `$selector`, or the whole page) |
+| `Condition::urlContains($text)` | the current URL contains the substring |
+
+## Solving simple captchas
+
+For simple **image (text) captchas**, `solveCaptcha()` screenshots the captcha image, reads it with OCR, and types the answer into an input. The OCR packages (`tesseract.js`, `jimp`) are **optional**; install them with `php artisan larascraper:install --captcha`. If they are missing, the scrape fails with a clear message pointing you to that command.
+
+```php
+MyScraper::scrape($url)
+    ->solveCaptcha('#captcha-img', '#captcha-input', [
+        'whitelist' => 'abcdefghijklmnopqrstuvwxyz0123456789', // allowed characters
+        'psm'       => 8,                                      // tesseract page-seg mode
+        'threshold' => 150,                                    // binarization threshold
+        // 'crop', 'scale', 'contrast', 'lang' are also accepted
+    ])
+    ->clickAndWait('#submit')
+    ->run();
+```
+
+Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captcha is accepted (see above). The `solver` option is reserved for future solvers (e.g. `'vision'`); only `'ocr'` is supported today.
+
+> **Scope:** this handles captchas where you read text and type it. It does **not** solve reCAPTCHA/hCaptcha image grids; those need a different approach.
+
+## Downloading files
+
+Sometimes the result you want is a **file** (a PDF behind a form, a ZIP, a generated report), not HTML. For that, use the ready-made `FileScraper`. You don't write a class: use it directly, submit the form with `submitAndCapture()`, and read the bytes from `$result->file`.
+
+```php
+use EduLazaro\Larascraper\FileScraper;
+
+$result = FileScraper::scrape('https://example.com/report')
+    ->submitAndCapture('form', ['expect' => 'application/pdf']) // submit + capture the file
+    ->run();
+
+if ($result->success && $result->file) {
+    file_put_contents('report.pdf', $result->file);   // $result->file is the raw bytes
+}
+```
+
+`submitAndCapture($formSelector, ['expect' => ...])` submits the form in-page and captures the response when its content type matches `expect` (a substring like `application/pdf`); otherwise it leaves nothing captured. The captured bytes land in `$result->file` and the type in `$result->contentType`.
+
+Serve it as a download from a controller:
+
+```php
+return response($result->file)
+    ->header('Content-Type', $result->contentType)
+    ->header('Content-Disposition', 'attachment; filename="report.pdf"');
+```
+
+### File behind a captcha
+
+Combine it with `solveCaptcha()` and `repeatUntil(Condition::captured(), ...)`: retry solving the captcha until the file is captured (always bounded by `max`):
+
+```php
+use EduLazaro\Larascraper\FileScraper;
+use EduLazaro\Larascraper\Support\Condition;
+
+$result = FileScraper::scrape('https://example.com/protected-document')
+    ->repeatUntil(
+        Condition::captured(),                        // stop once the file is captured
+        fn ($b) => $b
+            ->solveCaptcha('#captcha-img', 'input[name=captcha]')
+            ->submitAndCapture('form', ['expect' => 'application/pdf']),
+        max: 8,
+        delay: 500,
+    )
+    ->run();
+
+if ($result->success && $result->file) {
+    file_put_contents('document.pdf', $result->file);
+}
+```
+
+`Condition::captured()` is `true` as soon as `submitAndCapture()` grabs a file, so the loop stops on success and gives up after `max` attempts if the OCR never lands.
+
 ## Retry logic
 
 You can add the number of attempts and the number of seconds to wait between attempts:
@@ -220,6 +358,7 @@ Options:
 - `--publish` also publishes `scraper.cjs` to the project root (so you can customize it).
 - `--no-npm` skips the `npm install` and just prints the command to run.
 - `--no-browser` skips downloading Chrome (use it when a system Chrome is provided via `PUPPETEER_EXECUTABLE_PATH`).
+- `--captcha` also installs the optional OCR packages (`tesseract.js`, `jimp`) used by `solveCaptcha()`. Left out by default so projects that don't solve captchas stay lean.
 
 You can generate a scraper instance with:
 

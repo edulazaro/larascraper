@@ -176,6 +176,8 @@ class PuppeteerRunner
             'status' => $result['status'] ?? 500,
             'html'    => $result['html'] ?? '',
             'error'   => $result['error'] ?? null,
+            'file'    => $result['file'] ?? null,          // base64, decoded in Scraper::run()
+            'contentType' => $result['contentType'] ?? null,
         ];
     }
     
