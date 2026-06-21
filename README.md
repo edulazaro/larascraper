@@ -189,6 +189,39 @@ Both drivers share the same fluent API (`proxy()`, `timeout()`, `headers()`) and
 >
 > **Note:** the `http` driver cannot run [actions](#interacting-with-the-page-actions). Combining `->driver('http')` with `click()`, `type()`, etc. throws a `LogicException` — use the default `browser` driver for pages that need interaction or JavaScript.
 
+### POST requests, body and cookies (HTTP driver)
+
+The `http` driver can also send POST (or any verb), a request body, and cookies — useful for JSON/form APIs and session-protected endpoints:
+
+```php
+// POST a form body with a session cookie:
+ApiScraper::scrape('https://example.com/search.action')
+    ->driver('http')
+    ->method('POST')                                   // or ->post()
+    ->body(['q' => 'zelda', 'page' => 1], 'form')      // 'form' (default) or 'json'
+    ->cookies(['JSESSIONID' => $sessionId], 'example.com')
+    ->run();
+
+// JSON body shorthand:
+ApiScraper::scrape($url)->post()->asJson()->body($payload)->run();
+```
+
+| Method | Description |
+|---|---|
+| `->method($verb)` / `->post()` | Set the HTTP verb (default `GET`). `post()` is a shorthand for `method('POST')`. |
+| `->body($data, $format = 'form')` | Request body. `'form'` sends URL-encoded form fields, `'json'` sends JSON. |
+| `->asForm()` / `->asJson()` | Set the body format without re-passing the body. |
+| `->cookies($pairs, $domain)` | Send cookies as `['name' => 'value']` for the given domain. |
+
+The response exposes any `Set-Cookie` values the server returned in `$result->cookies` (a `['name' => 'value']` array), so you can capture a session from one request and reuse it on the next:
+
+```php
+$login = ApiScraper::scrape($loginUrl)->driver('http')->post()->body($creds)->run();
+$session = $login->cookies['JSESSIONID'] ?? null;
+```
+
+> These are **request options**, not page actions, so they're available on the `http` driver. The `browser` driver throws if you set `method()`/`body()`/`cookies()` — it navigates as a real browser instead.
+
 ## Interacting with the page (actions)
 
 Sometimes the content you need only appears after interacting with the page: accepting a cookie banner, filling and submitting a form, paginating, expanding a "show more" section or scrolling to trigger lazy loading.
@@ -222,6 +255,9 @@ $items = $result->data;                        // your handle() result
 | `->waitForNavigation()` | Wait for a navigation to finish. |
 | `->wait($ms)` | Wait a fixed number of milliseconds. |
 | `->scroll('bottom'\|'top')` / `->scrollToBottom()` | Scroll the page (infinite scroll / lazy load). |
+| `->visit($url)` | Navigate to a URL mid-flow (resolved against the current page). Handy at the start of a `repeatUntil()` body to return to a viewer page so each attempt starts from fresh server state. |
+| `->gotoAttr($selector, $attr = 'href')` | Navigate to the URL held in an element's attribute — e.g. an `<object data="...">` / `<embed src="...">` PDF viewer where the next URL lives in an attribute, not a link. |
+| `->reload()` | Reload the current page (e.g. to regenerate a captcha image before solving it). |
 
 If an action fails (for example a selector that never appears within the timeout), the scrape fails cleanly with `success = false` and the error message, just like an HTTP error.
 
@@ -360,6 +396,23 @@ if ($result->success && $result->file) {
 ```
 
 `Condition::captured()` is `true` as soon as `submitAndCapture()` grabs a file, so the loop stops on success and gives up after `max` attempts if the OCR never lands.
+
+**File behind a viewer + regenerating captcha.** Some sites show a viewer page whose real download URL lives in an `<object data="...">`, and the captcha is regenerated only when you re-enter that flow (a plain `reload()` won't refresh it). Re-navigate each attempt with `visit()` + `gotoAttr()` so every try gets a fresh captcha:
+
+```php
+$result = FileScraper::scrape($viewerUrl)
+    ->repeatUntil(
+        Condition::captured(),
+        fn ($b) => $b
+            ->visit($viewerUrl)                                   // back to the viewer — fresh state
+            ->gotoAttr('object[type*="pdf"], embed[type*="pdf"]', 'data') // → real URL + fresh captcha
+            ->solveCaptcha('img[src*="captcha"]', 'input[name=captcha]')
+            ->submitAndCapture('form', ['expect' => 'application/pdf']),
+        max: 8,
+        delay: 400,
+    )
+    ->run();
+```
 
 ## Retry logic
 
