@@ -164,6 +164,31 @@ To append custom headers:
 ])
 ```
 
+## Drivers (browser vs HTTP)
+
+By default Larascraper drives a real headless browser (Puppeteer), which renders JavaScript and can interact with the page. For static pages or APIs that don't need a browser, you can switch to the lightweight **`http`** driver, which fetches the URL with a plain HTTP request (via Laravel's HTTP client) — no Chromium, much faster and cheaper:
+
+```php
+// Browser (Puppeteer) — the default, nothing changes:
+BikeScraper::scrape('https://whatever.com/bikes/4')->run();
+
+// Plain HTTP — no browser:
+BikeScraper::scrape('https://whatever.com/bikes/4')
+    ->driver('http')
+    ->run();
+```
+
+Both drivers share the same fluent API (`proxy()`, `timeout()`, `headers()`) and return the same `ScraperResponse`, so your `handle()` method doesn't change.
+
+| Driver | Renders JS | Actions (click/type/…) | Speed | Needs Node/Chrome |
+|---|---|---|---|---|
+| `browser` (default) | ✅ | ✅ | Slower | ✅ |
+| `http` | ❌ | ❌ | Fast | ❌ |
+
+> The `http` driver uses Laravel's HTTP client, which relies on Guzzle. If it isn't already installed, run `composer require guzzlehttp/guzzle`.
+>
+> **Note:** the `http` driver cannot run [actions](#interacting-with-the-page-actions). Combining `->driver('http')` with `click()`, `type()`, etc. throws a `LogicException` — use the default `browser` driver for pages that need interaction or JavaScript.
+
 ## Interacting with the page (actions)
 
 Sometimes the content you need only appears after interacting with the page: accepting a cookie banner, filling and submitting a form, paginating, expanding a "show more" section or scrolling to trigger lazy loading.
@@ -435,4 +460,21 @@ source ~/.bash_profile
 Now Node will be available for non interative terminals and the scraping process should run successfully.
 
 In general, it's not recommended the usage of NVM on production environments.
+
+## Sponsors
+
+Larascraper is supported by the following sponsors. Thank you for keeping it growing:
+
+<p>
+  <a href="https://kenodo.com"><img src="art/logo-kenodo.png" width="24" alt="Kenodo"></a>&nbsp;<a href="https://kenodo.com">Kenodo</a>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://andorradev.com"><img src="art/logo-andorradev.png" width="24" alt="AndorraDev"></a>&nbsp;<a href="https://andorradev.com">AndorraDev</a>
+</p>
+
+## Author
+
+Created by [Edu Lazaro](https://edulazaro.com)
+
+## License
+
+Larascraper is open-sourced software licensed under the [MIT license](LICENSE.md).
 

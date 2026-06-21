@@ -2,13 +2,14 @@
 
 namespace EduLazaro\Larascraper\Runners;
 
+use EduLazaro\Larascraper\Contracts\Runner;
 use Exception;
 use RuntimeException;
 
 /**
  * Run a Puppeteer scraper using a Node script.
  */
-class PuppeteerRunner
+class PuppeteerRunner implements Runner
 {
     /** Node packages the bundled scraper.cjs needs to run. */
     private const REQUIRED_NODE_PACKAGES = [

@@ -3,10 +3,13 @@
 namespace EduLazaro\Larascraper;
 
 use Symfony\Component\DomCrawler\Crawler;
+use EduLazaro\Larascraper\Contracts\Runner;
 use EduLazaro\Larascraper\Runners\PuppeteerRunner;
+use EduLazaro\Larascraper\Runners\HttpRunner;
 use EduLazaro\Larascraper\Support\ScraperResponse;
 use EduLazaro\Larascraper\Concerns\BuildsActions;
 use ReflectionMethod;
+use InvalidArgumentException;
 use LogicException;
 use Throwable;
 
@@ -21,6 +24,15 @@ abstract class Scraper
     protected array $headers = [];
     protected int $timeout = 20000;
     protected Crawler $crawler;
+
+    /** Which runner to use: 'browser' (Puppeteer) or 'http' (plain HTTP). */
+    protected string $driver = 'browser';
+
+    /** Map of available drivers to their runner classes. */
+    protected array $drivers = [
+        'browser' => PuppeteerRunner::class,
+        'http' => HttpRunner::class,
+    ];
 
     public bool $success = false;
     public int $status = 0;
@@ -58,6 +70,25 @@ abstract class Scraper
     public function headers(array $headers): static
     {
         $this->headers = $headers;
+        return $this;
+    }
+
+    /**
+     * Choose the runner driver.
+     *
+     * @param string $driver 'browser' (Puppeteer, default) or 'http' (plain HTTP, no browser).
+     * @throws InvalidArgumentException If the driver is unknown.
+     */
+    public function driver(string $driver): static
+    {
+        if (!isset($this->drivers[$driver])) {
+            $available = implode(', ', array_keys($this->drivers));
+            throw new InvalidArgumentException(
+                "Unknown scraper driver [{$driver}]. Available drivers: {$available}."
+            );
+        }
+
+        $this->driver = $driver;
         return $this;
     }
 
@@ -101,23 +132,30 @@ abstract class Scraper
         $attempt = 0;
         $response = [];
 
+        // Build the runner once, before the retry loop. Configuration errors
+        // (e.g. using actions with the 'http' driver) should fail fast rather
+        // than be swallowed and retried, and there is no need to rebuild it on
+        // every attempt — only the fetch itself is retried.
+        /** @var Runner $runnerClass */
+        $runnerClass = $this->drivers[$this->driver];
+
+        $runner = $runnerClass::on($this->url)
+            ->timeout($this->timeout)
+            ->withHeaders($this->headers)
+            ->withActions($this->actions);
+
+        if ($this->proxy) {
+            $runner->proxy($this->proxy);
+        }
+
+        if ($this->proxyUser && $this->proxyPass) {
+            $runner->authenticate($this->proxyUser, $this->proxyPass);
+        }
+
         while (++$attempt <= $this->maxRetries) {
             echo ("GETTING: {$this->url} (Attempt #{$attempt})\n");
 
             try {
-
-                $runner = PuppeteerRunner::on($this->url)
-                    ->timeout($this->timeout)
-                    ->withHeaders($this->headers)
-                    ->withActions($this->actions);
-
-                if ($this->proxy) {
-                    $runner->proxy($this->proxy);
-                }
-
-                if ($this->proxyUser && $this->proxyPass) {
-                    $runner->authenticate($this->proxyUser, $this->proxyPass);
-                }
 
                 $response = $runner->run();
 

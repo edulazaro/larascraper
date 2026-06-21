@@ -1,6 +1,6 @@
 <?php
 
-namespace EduLazaro\Laractions\Tests;
+namespace EduLazaro\Larascraper\Tests;
 
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 use EduLazaro\Larascraper\LarascraperServiceProvider;
