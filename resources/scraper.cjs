@@ -289,6 +289,14 @@ async function runActions(page, actions, timeout) {
                 await page.goto(dest, { waitUntil: 'networkidle2', timeout });
                 break;
             }
+            case 'reload':
+                await page.reload({ waitUntil: 'networkidle2', timeout });
+                break;
+            case 'goto': {
+                const dest = new URL(action.url, page.url()).href;
+                await page.goto(dest, { waitUntil: 'networkidle2', timeout });
+                break;
+            }
             default:
                 throw new Error(`Unknown action type: ${action.type}`);
         }

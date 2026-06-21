@@ -230,6 +230,38 @@ trait BuildsActions
     }
 
     /**
+     * Reload the current page.
+     *
+     * Handy inside repeatUntil() loops where each attempt needs a freshly
+     * regenerated page — e.g. requesting a new captcha image before solving it.
+     *
+     * @return static
+     */
+    public function reload(): static
+    {
+        $this->actions[] = ['type' => 'reload'];
+
+        return $this;
+    }
+
+    /**
+     * Navigate to an absolute or relative URL.
+     *
+     * Like the initial scrape URL, but as a mid-flow action — e.g. returning to
+     * a viewer page at the start of each repeatUntil() iteration so the next
+     * step (gotoAttr/captcha) starts from a fresh server state.
+     *
+     * @param string $url Destination URL (resolved against the current page).
+     * @return static
+     */
+    public function visit(string $url): static
+    {
+        $this->actions[] = ['type' => 'goto', 'url' => $url];
+
+        return $this;
+    }
+
+    /**
      * Conditionally run a branch of actions, evaluated against the live page.
      *
      * The condition is JS-evaluable data (not a PHP boolean), e.g.
