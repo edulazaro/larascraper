@@ -275,6 +275,20 @@ async function runActions(page, actions, timeout) {
                     window.scrollTo(0, to === 'top' ? 0 : document.body.scrollHeight);
                 }, action.to ?? 'bottom');
                 break;
+            case 'gotoAttr': {
+                // Read a URL from an element's attribute and navigate to it.
+                const dest = await page.evaluate((sel, attr) => {
+                    const el = document.querySelector(sel);
+                    if (!el) return null;
+                    const val = el.getAttribute(attr);
+                    return val ? new URL(val, location.href).href : null;
+                }, action.selector, action.attr || 'href');
+                if (!dest) {
+                    throw new Error(`gotoAttr: attribute "${action.attr || 'href'}" not found on "${action.selector}"`);
+                }
+                await page.goto(dest, { waitUntil: 'networkidle2', timeout });
+                break;
+            }
             default:
                 throw new Error(`Unknown action type: ${action.type}`);
         }

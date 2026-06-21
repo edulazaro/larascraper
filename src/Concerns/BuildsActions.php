@@ -207,6 +207,29 @@ trait BuildsActions
     }
 
     /**
+     * Navigate to the URL held in an element's attribute.
+     *
+     * Reads `attr` from the first element matching `selector`, resolves it
+     * against the current page URL, and navigates there. Useful when the next
+     * page's URL lives in an attribute rather than a clickable link — e.g. an
+     * `<object data="...">` / `<embed src="...">` PDF viewer.
+     *
+     * @param string $selector CSS selector of the element holding the URL.
+     * @param string $attr Attribute to read (default 'href').
+     * @return static
+     */
+    public function gotoAttr(string $selector, string $attr = 'href'): static
+    {
+        $this->actions[] = [
+            'type' => 'gotoAttr',
+            'selector' => $selector,
+            'attr' => $attr,
+        ];
+
+        return $this;
+    }
+
+    /**
      * Conditionally run a branch of actions, evaluated against the live page.
      *
      * The condition is JS-evaluable data (not a PHP boolean), e.g.
