@@ -216,14 +216,18 @@ trait BuildsActions
      *
      * @param string $selector CSS selector of the element holding the URL.
      * @param string $attr Attribute to read (default 'href').
+     * @param string $waitUntil Puppeteer navigation wait condition. Default
+     *        'networkidle2'; use 'domcontentloaded' for sites that keep
+     *        connections open and never reach network idle.
      * @return static
      */
-    public function gotoAttr(string $selector, string $attr = 'href'): static
+    public function gotoAttr(string $selector, string $attr = 'href', string $waitUntil = 'networkidle2'): static
     {
         $this->actions[] = [
             'type' => 'gotoAttr',
             'selector' => $selector,
             'attr' => $attr,
+            'waitUntil' => $waitUntil,
         ];
 
         return $this;
@@ -235,11 +239,13 @@ trait BuildsActions
      * Handy inside repeatUntil() loops where each attempt needs a freshly
      * regenerated page — e.g. requesting a new captcha image before solving it.
      *
+     * @param string $waitUntil Puppeteer navigation wait condition (default
+     *        'networkidle2'; use 'domcontentloaded' for never-idle sites).
      * @return static
      */
-    public function reload(): static
+    public function reload(string $waitUntil = 'networkidle2'): static
     {
-        $this->actions[] = ['type' => 'reload'];
+        $this->actions[] = ['type' => 'reload', 'waitUntil' => $waitUntil];
 
         return $this;
     }
@@ -252,11 +258,14 @@ trait BuildsActions
      * step (gotoAttr/captcha) starts from a fresh server state.
      *
      * @param string $url Destination URL (resolved against the current page).
+     * @param string $waitUntil Puppeteer navigation wait condition. Default
+     *        'networkidle2'; use 'domcontentloaded' for sites that keep
+     *        connections open and never reach network idle.
      * @return static
      */
-    public function visit(string $url): static
+    public function visit(string $url, string $waitUntil = 'networkidle2'): static
     {
-        $this->actions[] = ['type' => 'goto', 'url' => $url];
+        $this->actions[] = ['type' => 'goto', 'url' => $url, 'waitUntil' => $waitUntil];
 
         return $this;
     }

@@ -17,6 +17,7 @@ class BuildsActionsTest extends BaseTestCase
             'type' => 'gotoAttr',
             'selector' => 'object[type*="pdf"]',
             'attr' => 'data',
+            'waitUntil' => 'networkidle2',
         ]], $actions);
     }
 
@@ -35,7 +36,7 @@ class BuildsActionsTest extends BaseTestCase
             ->reload()
             ->getActions();
 
-        $this->assertSame([['type' => 'reload']], $actions);
+        $this->assertSame([['type' => 'reload', 'waitUntil' => 'networkidle2']], $actions);
     }
 
     public function test_visit_builds_a_goto_action(): void
@@ -44,6 +45,18 @@ class BuildsActionsTest extends BaseTestCase
             ->visit('https://example.com/viewer')
             ->getActions();
 
-        $this->assertSame([['type' => 'goto', 'url' => 'https://example.com/viewer']], $actions);
+        $this->assertSame(
+            [['type' => 'goto', 'url' => 'https://example.com/viewer', 'waitUntil' => 'networkidle2']],
+            $actions
+        );
+    }
+
+    public function test_visit_accepts_a_wait_until_override(): void
+    {
+        $actions = TestScraper::scrape('https://example.com')
+            ->visit('https://example.com/viewer', 'domcontentloaded')
+            ->getActions();
+
+        $this->assertSame('domcontentloaded', $actions[0]['waitUntil']);
     }
 }

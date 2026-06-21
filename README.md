@@ -255,9 +255,11 @@ $items = $result->data;                        // your handle() result
 | `->waitForNavigation()` | Wait for a navigation to finish. |
 | `->wait($ms)` | Wait a fixed number of milliseconds. |
 | `->scroll('bottom'\|'top')` / `->scrollToBottom()` | Scroll the page (infinite scroll / lazy load). |
-| `->visit($url)` | Navigate to a URL mid-flow (resolved against the current page). Handy at the start of a `repeatUntil()` body to return to a viewer page so each attempt starts from fresh server state. |
-| `->gotoAttr($selector, $attr = 'href')` | Navigate to the URL held in an element's attribute — e.g. an `<object data="...">` / `<embed src="...">` PDF viewer where the next URL lives in an attribute, not a link. |
-| `->reload()` | Reload the current page (e.g. to regenerate a captcha image before solving it). |
+| `->visit($url, $waitUntil = 'networkidle2')` | Navigate to a URL mid-flow (resolved against the current page). Handy at the start of a `repeatUntil()` body to return to a viewer page so each attempt starts from fresh server state. |
+| `->gotoAttr($selector, $attr = 'href', $waitUntil = 'networkidle2')` | Navigate to the URL held in an element's attribute — e.g. an `<object data="...">` / `<embed src="...">` PDF viewer where the next URL lives in an attribute, not a link. |
+| `->reload($waitUntil = 'networkidle2')` | Reload the current page (e.g. to regenerate a captcha image before solving it). |
+
+> **`waitUntil` on navigation actions.** `visit()`, `gotoAttr()` and `reload()` accept a Puppeteer wait condition. The default `'networkidle2'` is right for most pages, but some servers keep connections open and **never reach network idle** — there `'networkidle2'` would burn the whole timeout. For those, pass `'domcontentloaded'` and rely on a following `waitForSelector()` as the real "content is ready" signal: `->visit($url, 'domcontentloaded')->waitForSelector('.results')`.
 
 If an action fails (for example a selector that never appears within the timeout), the scrape fails cleanly with `success = false` and the error message, just like an HTTP error.
 
