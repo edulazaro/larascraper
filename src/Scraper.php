@@ -25,6 +25,13 @@ abstract class Scraper
     protected int $timeout = 20000;
     protected Crawler $crawler;
 
+    /** HTTP method for the 'http' driver (browser driver is GET-only). */
+    protected string $httpMethod = 'GET';
+    protected mixed $body = null;
+    protected string $bodyFormat = 'form';
+    protected array $cookies = [];
+    protected ?string $cookieDomain = null;
+
     /** Which runner to use: 'browser' (Puppeteer) or 'http' (plain HTTP). */
     protected string $driver = 'browser';
 
@@ -93,6 +100,59 @@ abstract class Scraper
     }
 
     /**
+     * Set the HTTP method (only meaningful for the 'http' driver).
+     */
+    public function method(string $method): static
+    {
+        $this->httpMethod = strtoupper($method);
+        return $this;
+    }
+
+    /**
+     * Shortcut: POST with a body (form by default).
+     */
+    public function post(mixed $body = [], string $format = 'form'): static
+    {
+        $this->httpMethod = 'POST';
+        $this->body = $body;
+        $this->bodyFormat = $format === 'json' ? 'json' : 'form';
+        return $this;
+    }
+
+    /**
+     * Set the request body.
+     */
+    public function body(mixed $body): static
+    {
+        $this->body = $body;
+        return $this;
+    }
+
+    /** Send the body as JSON. */
+    public function asJson(): static
+    {
+        $this->bodyFormat = 'json';
+        return $this;
+    }
+
+    /** Send the body as x-www-form-urlencoded. */
+    public function asForm(): static
+    {
+        $this->bodyFormat = 'form';
+        return $this;
+    }
+
+    /**
+     * Set request cookies (name => value), with optional domain.
+     */
+    public function cookies(array $cookies, ?string $domain = null): static
+    {
+        $this->cookies = $cookies;
+        $this->cookieDomain = $domain;
+        return $this;
+    }
+
+    /**
      * Set proxy with optional auth.
      */
     public function proxy(string $proxy, ?string $user = null, ?string $pass = null): static
@@ -142,7 +202,10 @@ abstract class Scraper
         $runner = $runnerClass::on($this->url)
             ->timeout($this->timeout)
             ->withHeaders($this->headers)
-            ->withActions($this->actions);
+            ->withActions($this->actions)
+            ->method($this->httpMethod)
+            ->body($this->body, $this->bodyFormat)
+            ->cookies($this->cookies, $this->cookieDomain);
 
         if ($this->proxy) {
             $runner->proxy($this->proxy);
@@ -153,7 +216,7 @@ abstract class Scraper
         }
 
         while (++$attempt <= $this->maxRetries) {
-            echo ("GETTING: {$this->url} (Attempt #{$attempt})\n");
+            $this->log("GETTING: {$this->url} (Attempt #{$attempt})");
 
             try {
 
@@ -169,21 +232,21 @@ abstract class Scraper
                     break;
                 }
 
-                echo ("Error getting {$this->url} on attempt #{$attempt}: {$this->status}\n");
+                $this->log("Error getting {$this->url} on attempt #{$attempt}: {$this->status}");
 
                 if (!in_array($this->status, [408, 429, 500, 502, 503, 504])) {
                     break;
                 }
 
             } catch (Throwable $e) {
-                echo ("Error getting {$this->url} on attempt #{$attempt}: {$e->getMessage()}\n");
+                $this->log("Error getting {$this->url} on attempt #{$attempt}: {$e->getMessage()}");
 
                 $this->error = $e->getMessage();
                 $this->success = false;
             }
 
             if ($attempt < $this->maxRetries) {
-                echo ("Retrying in {$this->retryDelay} seconds...\n");
+                $this->log("Retrying in {$this->retryDelay} seconds...");
                 sleep($this->retryDelay);
             }
         }
@@ -216,5 +279,17 @@ abstract class Scraper
             file: $file,
             contentType: $response['contentType'] ?? null,
         );
+    }
+
+    /**
+     * Write a progress line to stdout, suppressed while running tests.
+     */
+    protected function log(string $message): void
+    {
+        if (app()->runningUnitTests()) {
+            return;
+        }
+
+        echo $message . "\n";
     }
 }

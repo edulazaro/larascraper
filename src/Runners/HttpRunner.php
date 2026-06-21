@@ -23,6 +23,11 @@ class HttpRunner implements Runner
     protected ?string $password = null;
     protected array $headers = [];
     protected int $timeout = 20000;
+    protected string $method = 'GET';
+    protected mixed $body = null;
+    protected string $bodyFormat = 'form';
+    protected array $cookies = [];
+    protected ?string $cookieDomain = null;
 
     /**
      * Initialize the runner with a target URL.
@@ -107,6 +112,46 @@ class HttpRunner implements Runner
     }
 
     /**
+     * Set the HTTP method (GET, POST, PUT, PATCH, DELETE).
+     *
+     * @param string $method HTTP verb.
+     * @return static
+     */
+    public function method(string $method): static
+    {
+        $this->method = strtoupper($method);
+        return $this;
+    }
+
+    /**
+     * Set the request body for non-GET requests.
+     *
+     * @param mixed  $body   Payload (array for form/json), or null.
+     * @param string $format 'form' or 'json'.
+     * @return static
+     */
+    public function body(mixed $body, string $format = 'form'): static
+    {
+        $this->body = $body;
+        $this->bodyFormat = $format === 'json' ? 'json' : 'form';
+        return $this;
+    }
+
+    /**
+     * Set request cookies.
+     *
+     * @param array       $cookies Associative array of cookie name => value.
+     * @param string|null $domain  Cookie domain (defaults to the URL host).
+     * @return static
+     */
+    public function cookies(array $cookies, ?string $domain = null): static
+    {
+        $this->cookies = $cookies;
+        $this->cookieDomain = $domain;
+        return $this;
+    }
+
+    /**
      * Run the HTTP request and return the normalized result array.
      *
      * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string}
@@ -125,7 +170,19 @@ class HttpRunner implements Runner
                 $request = $request->withBasicAuth($this->user, $this->password);
             }
 
-            $response = $request->get($this->url);
+            if (!empty($this->cookies)) {
+                $domain = $this->cookieDomain ?: (parse_url($this->url, PHP_URL_HOST) ?: '');
+                $request = $request->withCookies($this->cookies, $domain);
+            }
+
+            if ($this->method === 'GET') {
+                $response = $request->get($this->url);
+            } else {
+                $request = $this->bodyFormat === 'json' ? $request->asJson() : $request->asForm();
+                $payload = is_array($this->body) ? $this->body : (array) ($this->body ?? []);
+                $verb = strtolower($this->method);
+                $response = $request->{$verb}($this->url, $payload);
+            }
 
             return [
                 'success' => $response->successful(),

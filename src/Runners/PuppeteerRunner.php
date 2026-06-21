@@ -93,6 +93,63 @@ class PuppeteerRunner implements Runner
     }
 
     /**
+     * Set the HTTP method. The browser driver only navigates with GET.
+     *
+     * @param string $method HTTP verb.
+     * @throws \LogicException If a non-GET method is requested.
+     * @return static
+     */
+    public function method(string $method): static
+    {
+        if (strtoupper($method) !== 'GET') {
+            throw new \LogicException(
+                'The "browser" driver only supports GET navigation. '
+                . 'Use the "http" driver for POST/PUT/PATCH/DELETE requests.'
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Set the request body. Not supported by the browser driver.
+     *
+     * @param mixed  $body
+     * @param string $format
+     * @throws \LogicException If a body is provided.
+     * @return static
+     */
+    public function body(mixed $body, string $format = 'form'): static
+    {
+        if (!empty($body)) {
+            throw new \LogicException(
+                'The "browser" driver does not support request bodies. Use the "http" driver.'
+            );
+        }
+
+        return $this;
+    }
+
+    /**
+     * Set request cookies. Not supported by the browser driver yet.
+     *
+     * @param array       $cookies
+     * @param string|null $domain
+     * @throws \LogicException If cookies are provided.
+     * @return static
+     */
+    public function cookies(array $cookies, ?string $domain = null): static
+    {
+        if (!empty($cookies)) {
+            throw new \LogicException(
+                'Cookies are only supported by the "http" driver for now.'
+            );
+        }
+
+        return $this;
+    }
+
+    /**
      * Set the timeout in milliseconds.
      * 
      * @param int $ms Timeout duration in milliseconds.

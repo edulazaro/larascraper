@@ -69,6 +69,35 @@ interface Runner
     public function timeout(int $ms): static;
 
     /**
+     * Set the HTTP method (GET, POST, PUT, PATCH, DELETE).
+     *
+     * The "http" driver honours this; the "browser" driver only supports GET
+     * navigation and throws otherwise.
+     *
+     * @param string $method HTTP verb.
+     * @return static
+     */
+    public function method(string $method): static;
+
+    /**
+     * Set the request body for non-GET requests.
+     *
+     * @param mixed  $body   Payload (array for form/json), or null.
+     * @param string $format 'form' (x-www-form-urlencoded) or 'json'.
+     * @return static
+     */
+    public function body(mixed $body, string $format = 'form'): static;
+
+    /**
+     * Set request cookies (name => value).
+     *
+     * @param array       $cookies Associative array of cookie name => value.
+     * @param string|null $domain  Cookie domain (defaults to the URL host).
+     * @return static
+     */
+    public function cookies(array $cookies, ?string $domain = null): static;
+
+    /**
      * Run the scraper and return the normalized result array.
      *
      * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string}

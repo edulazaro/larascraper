@@ -86,4 +86,71 @@ class HttpRunnerTest extends BaseTestCase
 
         Http::assertNothingSent();
     }
+
+    public function test_it_sends_a_post_with_a_form_body(): void
+    {
+        Http::fake(['*' => Http::response('ok', 200)]);
+
+        HttpRunner::on('https://api.test/search')
+            ->method('POST')
+            ->body(['databasematch' => 'ANDORRA', 'start' => 1], 'form')
+            ->run();
+
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            return $request->method() === 'POST'
+                && $request->isForm()
+                && $request['databasematch'] === 'ANDORRA'
+                && (string) $request['start'] === '1';
+        });
+    }
+
+    public function test_it_sends_a_post_with_a_json_body(): void
+    {
+        Http::fake(['*' => Http::response('ok', 200)]);
+
+        HttpRunner::on('https://api.test/search')
+            ->method('POST')
+            ->body(['q' => 'x'], 'json')
+            ->run();
+
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            return $request->method() === 'POST'
+                && $request->isJson()
+                && $request['q'] === 'x';
+        });
+    }
+
+    public function test_it_sends_cookies(): void
+    {
+        Http::fake(['*' => Http::response('ok', 200)]);
+
+        HttpRunner::on('https://api.test/x')
+            ->cookies(['JSESSIONID' => 'abc123'])
+            ->run();
+
+        Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            $cookie = $request->header('Cookie');
+            return !empty($cookie) && str_contains($cookie[0], 'JSESSIONID=abc123');
+        });
+    }
+
+    public function test_a_scraper_can_post_via_the_http_driver(): void
+    {
+        Http::fake(['*' => Http::response('<html><head><title>Bike 4</title></head></html>', 200)]);
+
+        $result = TestScraper::scrape('https://shop.test/bikes/4')
+            ->driver('http')
+            ->post(['id' => 4], 'form')
+            ->run();
+
+        $this->assertTrue($result->success);
+        Http::assertSent(fn (\Illuminate\Http\Client\Request $r) => $r->method() === 'POST' && (string) $r['id'] === '4');
+    }
+
+    public function test_browser_driver_rejects_post(): void
+    {
+        $this->expectException(LogicException::class);
+
+        \EduLazaro\Larascraper\Runners\PuppeteerRunner::on('https://example.com')->method('POST');
+    }
 }
