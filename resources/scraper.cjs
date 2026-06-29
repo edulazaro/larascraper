@@ -247,6 +247,14 @@ async function runActions(page, actions, timeout) {
                 await page.waitForSelector(action.selector, { timeout });
                 await page.select(action.selector, action.value);
                 break;
+            case 'setValue':
+                await page.waitForSelector(action.selector, { timeout });
+                await page.$eval(action.selector, (el, v) => {
+                    el.value = v;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }, action.value ?? '');
+                break;
             case 'hover':
                 await page.waitForSelector(action.selector, { timeout });
                 await page.hover(action.selector);

@@ -249,6 +249,7 @@ $items = $result->data;                        // your handle() result
 | `->click($selector, waitForNavigation: true)` / `->clickAndWait($selector)` | Click that triggers a page load, and wait for it. |
 | `->type($selector, $text)` | Type text into an input (waits for it first). |
 | `->select($selector, $value)` | Choose an option (by value) in a `<select>`. |
+| `->setValue($selector, $value)` | Set an element's value directly, firing `input` + `change` events. For hidden inputs populated by a custom widget (multiselects backed by an `<input type="hidden">`), or fields `type()`/`select()` can't reach. |
 | `->hover($selector)` | Hover over an element. |
 | `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`…). Pass `waitForNavigation: true` when it submits a form. |
 | `->waitForSelector($selector)` | Wait until an element appears (lazy/JS content). |

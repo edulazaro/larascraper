@@ -82,6 +82,18 @@ trait BuildsActions
     }
 
     /**
+     * Set the value of an element directly (waits for it first), firing input + change
+     * events so JS widgets/listeners react. Useful for hidden inputs that a custom widget
+     * populates (multiselects backed by an <input type="hidden">), or fields that
+     * type()/select() can't reach.
+     */
+    public function setValue(string $selector, string $value): static
+    {
+        $this->actions[] = ['type' => 'setValue', 'selector' => $selector, 'value' => $value];
+        return $this;
+    }
+
+    /**
      * Hover over an element matching the CSS selector.
      */
     public function hover(string $selector): static
