@@ -1,8 +1,59 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 
 
 puppeteer.use(StealthPlugin());
+
+// Resolve a Chrome binary to launch. Puppeteer pins ONE exact build and aborts
+// with "Could not find Chrome (ver. X)" when the cached binary is a different
+// version — which happens on every puppeteer bump, since the cached Chrome is
+// installed separately and does not update in lockstep. To stay resilient across
+// that drift, point puppeteer at whatever Chrome is actually present in its cache,
+// choosing the NEWEST version. An explicit PUPPETEER_EXECUTABLE_PATH always wins;
+// if nothing is found we return undefined and let puppeteer resolve on its own.
+function resolveChromePath() {
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR
+        || path.join(os.homedir(), '.cache', 'puppeteer');
+    const chromeDir = path.join(cacheDir, 'chrome');
+
+    let entries;
+    try {
+        entries = fs.readdirSync(chromeDir);
+    } catch (e) {
+        return undefined;
+    }
+
+    // Folder names look like "linux-148.0.7778.97" → sort by numeric version desc.
+    const candidates = entries
+        .map(name => {
+            const m = name.match(/-(\d+(?:\.\d+)*)$/);
+            return { name, version: m ? m[1].split('.').map(Number) : [0] };
+        })
+        .sort((a, b) => {
+            const len = Math.max(a.version.length, b.version.length);
+            for (let i = 0; i < len; i++) {
+                const d = (b.version[i] || 0) - (a.version[i] || 0);
+                if (d !== 0) return d;
+            }
+            return 0;
+        });
+
+    for (const { name } of candidates) {
+        for (const rel of [['chrome-linux64', 'chrome'], ['chrome-linux', 'chrome']]) {
+            const p = path.join(chromeDir, name, ...rel);
+            if (fs.existsSync(p)) return p;
+        }
+    }
+
+    return undefined;
+}
 
 const args = Object.fromEntries(
     process.argv.slice(2).map(arg => {
@@ -327,7 +378,11 @@ async function runActions(page, actions, timeout) {
 
         if (proxy) launchArgs.push(`--proxy-server=${proxy}`);
 
-        browser = await puppeteer.launch({ headless: 'new', args: launchArgs });
+        const launchOptions = { headless: 'new', args: launchArgs };
+        const chromePath = resolveChromePath();
+        if (chromePath) launchOptions.executablePath = chromePath;
+
+        browser = await puppeteer.launch(launchOptions);
         const page = await browser.newPage();
 
         if (proxyUser && proxyPass) {
