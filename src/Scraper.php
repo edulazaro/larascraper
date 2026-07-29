@@ -8,6 +8,7 @@ use EduLazaro\Larascraper\Runners\PuppeteerRunner;
 use EduLazaro\Larascraper\Runners\HttpRunner;
 use EduLazaro\Larascraper\Support\ScraperResponse;
 use EduLazaro\Larascraper\Concerns\BuildsActions;
+use EduLazaro\Larascraper\Concerns\ExtractsContent;
 use ReflectionMethod;
 use InvalidArgumentException;
 use LogicException;
@@ -16,6 +17,7 @@ use Throwable;
 abstract class Scraper
 {
     use BuildsActions;
+    use ExtractsContent;
 
     protected string $url;
     protected ?string $proxy = null;
@@ -24,6 +26,9 @@ abstract class Scraper
     protected array $headers = [];
     protected int $timeout = 20000;
     protected Crawler $crawler;
+
+    /** Raw bytes of a captured file/binary (from capture()/submitAndCapture), for text()/vision(). */
+    protected ?string $file = null;
 
     /** HTTP method for the 'http' driver (browser driver is GET-only). */
     protected string $httpMethod = 'GET';
@@ -253,6 +258,10 @@ abstract class Scraper
 
         $this->crawler = new Crawler($response['html'] ?? '');
 
+        // A captured file/binary arrives base64-encoded from the scraper script.
+        // Decode it BEFORE handle() so $this->text()/$this->vision() can use it.
+        $this->file = isset($response['file']) ? base64_decode($response['file']) : null;
+
         if (array_key_first($params) == 0) {
 
             $reflection = new ReflectionMethod($this, 'handle');
@@ -267,16 +276,13 @@ abstract class Scraper
 
         $data = $this->handle(...$params);
 
-        // A captured file/binary arrives base64-encoded from the scraper script.
-        $file = isset($response['file']) ? base64_decode($response['file']) : null;
-
         return new ScraperResponse(
             success: $this->success,
             status: $this->status,
             error: $this->error,
             html: $this->html ?? '',
             data: $data,
-            file: $file,
+            file: $this->file,
             contentType: $response['contentType'] ?? null,
             cookies: $response['cookies'] ?? [],
         );

@@ -196,7 +196,31 @@ trait BuildsActions
     }
 
     /**
+     * Submit a form in-page (via fetch) so a following capture() can grab the
+     * response. Reads the form's fields and posts to its action, then records
+     * the response for capture() to pick up. The composable replacement for
+     * submitAndCapture():
+     *
+     *     ->submit('form')->capture(['expect' => 'application/pdf'])
+     *
+     * @param string $formSelector CSS selector of the <form> to submit.
+     * @return static
+     */
+    public function submit(string $formSelector): static
+    {
+        $this->actions[] = [
+            'type' => 'submit',
+            'formSelector' => $formSelector,
+        ];
+
+        return $this;
+    }
+
+    /**
      * Submit a form and capture the response if it is a file/binary.
+     *
+     * @deprecated since 2.3, removed in 3.0. Use submit() + capture() instead:
+     *             `->submit('form')->capture(['expect' => 'application/pdf'])`.
      *
      * Builds the form's fields, submits it in-page (via fetch), and if the
      * response matches `expect` (a content-type substring, e.g. 'application/pdf')
@@ -213,6 +237,34 @@ trait BuildsActions
             'type' => 'submitAndCapture',
             'formSelector' => $formSelector,
             'expect' => $options['expect'] ?? null,
+        ];
+
+        return $this;
+    }
+
+    /**
+     * Capture the binary of the response triggered by the PRECEDING action (a
+     * click, navigation or submit that leads to a PDF or other file). Unlike
+     * submitAndCapture() it needs no `<form>`: the browser records file-like
+     * responses and this grabs the one matching the expected content type. The
+     * bytes land in `$result->file` and the type in `$result->contentType`
+     * (browser driver only). Pair with `repeatUntil(Condition::captured(), ...)`
+     * to retry.
+     *
+     * @param string|array $options A content-type substring (e.g.
+     *        `'application/pdf'`), or an options array: `'expect'` (content-type
+     *        substring) and `'timeout'` (ms to wait for the response). No value
+     *        captures the first file-like response.
+     * @return static
+     */
+    public function capture(string|array $options = []): static
+    {
+        $opts = is_string($options) ? ['expect' => $options] : $options;
+
+        $this->actions[] = [
+            'type' => 'capture',
+            'expect' => $opts['expect'] ?? null,
+            'timeout' => $opts['timeout'] ?? null,
         ];
 
         return $this;

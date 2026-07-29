@@ -43,6 +43,30 @@ Use `--no-browser` if you provide your own Chrome via `PUPPETEER_EXECUTABLE_PATH
 
 Please note that when you run the scraper via a scheduled task, chances are a non interactive terminal is used. Usually Node will be available, but it may not be the case when installing Node via NVM. In this scenario, check the **issues** section at the end.
 
+## Drivers (browser vs HTTP)
+
+Larascraper has **two engines**, chosen with `->driver(...)`. Worth knowing first, because every example below runs on one of them:
+
+- **`browser`** (default): a real headless browser (Puppeteer / Chromium). Renders JavaScript and runs [actions](#interacting-with-the-page-actions) (click, type, solve captchas, capture files). Slower, and needs Node + Chrome.
+- **`http`**: a plain HTTP request (Laravel's HTTP client). Fast, no browser, but **cannot** render JS or run actions. Best for static pages, APIs and direct file URLs.
+
+```php
+// Browser (Puppeteer), the default:
+BikeScraper::scrape('https://whatever.com/bikes/4')->run();
+
+// Plain HTTP, no browser:
+BikeScraper::scrape('https://whatever.com/bikes/4')->driver('http')->run();
+```
+
+| Driver | Renders JS | Actions | Speed | Needs Node/Chrome |
+|---|---|---|---|---|
+| `browser` (default) | ✅ | ✅ | Slower | ✅ |
+| `http` | ❌ | ❌ | Fast | ❌ |
+
+Both drivers share the same fluent API (`proxy()`, `timeout()`, `headers()`) and return the same `ScraperResponse`, so your `handle()` doesn't change. Combining `->driver('http')` with actions (`click()`, `type()`, …) throws a `LogicException`. POST, body and cookie options for the `http` driver have [their own section](#post-requests-body-and-cookies-http-driver) below.
+
+> The `http` driver uses Laravel's HTTP client (Guzzle). If it isn't installed, run `composer require guzzlehttp/guzzle`.
+
 ## Basic Usage
 
 
@@ -164,32 +188,7 @@ To append custom headers:
 ])
 ```
 
-## Drivers (browser vs HTTP)
-
-By default Larascraper drives a real headless browser (Puppeteer), which renders JavaScript and can interact with the page. For static pages or APIs that don't need a browser, you can switch to the lightweight **`http`** driver, which fetches the URL with a plain HTTP request (via Laravel's HTTP client) — no Chromium, much faster and cheaper:
-
-```php
-// Browser (Puppeteer) — the default, nothing changes:
-BikeScraper::scrape('https://whatever.com/bikes/4')->run();
-
-// Plain HTTP — no browser:
-BikeScraper::scrape('https://whatever.com/bikes/4')
-    ->driver('http')
-    ->run();
-```
-
-Both drivers share the same fluent API (`proxy()`, `timeout()`, `headers()`) and return the same `ScraperResponse`, so your `handle()` method doesn't change.
-
-| Driver | Renders JS | Actions (click/type/…) | Speed | Needs Node/Chrome |
-|---|---|---|---|---|
-| `browser` (default) | ✅ | ✅ | Slower | ✅ |
-| `http` | ❌ | ❌ | Fast | ❌ |
-
-> The `http` driver uses Laravel's HTTP client, which relies on Guzzle. If it isn't already installed, run `composer require guzzlehttp/guzzle`.
->
-> **Note:** the `http` driver cannot run [actions](#interacting-with-the-page-actions). Combining `->driver('http')` with `click()`, `type()`, etc. throws a `LogicException` — use the default `browser` driver for pages that need interaction or JavaScript.
-
-### POST requests, body and cookies (HTTP driver)
+## POST requests, body and cookies (HTTP driver)
 
 The `http` driver can also send POST (or any verb), a request body, and cookies — useful for JSON/form APIs and session-protected endpoints:
 
@@ -350,23 +349,49 @@ Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captc
 
 ## Downloading files
 
-Sometimes the result you want is a **file** (a PDF behind a form, a ZIP, a generated report), not HTML. For that, use the ready-made `FileScraper`. You don't write a class: use it directly, submit the form with `submitAndCapture()`, and read the bytes from `$result->file`.
+Sometimes the result you want is a **file** (a PDF, a ZIP, a report), not HTML. Captured bytes land in `$result->file`. Use the ready-made `FileScraper` (no class needed) or your own scraper.
+
+### From a click or link (no form)
+
+Click (or navigate) to the file, then `capture()` grabs the binary of the response it triggers:
 
 ```php
 use EduLazaro\Larascraper\FileScraper;
 
-$result = FileScraper::scrape('https://example.com/report')
-    ->submitAndCapture('form', ['expect' => 'application/pdf']) // submit + capture the file
+$result = FileScraper::scrape($pageUrl)
+    ->click('a.download-pdf')
+    ->capture('application/pdf')   // grab the response; the arg is an optional content-type filter
     ->run();
 
 if ($result->success && $result->file) {
-    file_put_contents('report.pdf', $result->file);   // $result->file is the raw bytes
+    file_put_contents('report.pdf', $result->file);   // raw bytes
 }
 ```
 
-`submitAndCapture($formSelector, ['expect' => ...])` submits the form in-page and captures the response when its content type matches `expect` (a substring like `application/pdf`); otherwise it leaves nothing captured. The captured bytes land in `$result->file` and the type in `$result->contentType`.
+`capture($expect)` records the file-like responses the page produces and keeps the one matching `expect` (a content-type substring like `application/pdf`; PDFs also match by their `%PDF` magic bytes). With no argument it takes the first file-like response. Pair it with `repeatUntil(Condition::captured(), ...)` to retry. It captures files that **render inline** (the browser's PDF viewer); a forced download (`Content-Disposition: attachment`) is not captured.
 
-Serve it as a download from a controller:
+### From a form
+
+When the file only comes back from **submitting a form** (hidden fields, tokens, a session), submit it and capture the response:
+
+```php
+$result = FileScraper::scrape('https://example.com/report')
+    ->submit('form')
+    ->capture('application/pdf')
+    ->run();
+```
+
+> `submitAndCapture('form', ['expect' => ...])` does both in one call, but is **deprecated** (removed in 3.0). Prefer `submit()` + `capture()`.
+
+### From a direct URL
+
+If the file sits at a plain URL, skip the browser entirely and fetch it with the `http` driver; the body is the file:
+
+```php
+$bytes = FileScraper::scrape('https://example.com/report.pdf')->driver('http')->run()->html;
+```
+
+Serve any captured file as a download from a controller:
 
 ```php
 return response($result->file)
@@ -374,48 +399,61 @@ return response($result->file)
     ->header('Content-Disposition', 'attachment; filename="report.pdf"');
 ```
 
-### File behind a captcha
+### Behind a captcha
 
-Combine it with `solveCaptcha()` and `repeatUntil(Condition::captured(), ...)`: retry solving the captcha until the file is captured (always bounded by `max`):
+Wrap the capture in `repeatUntil(Condition::captured(), ...)` and solve the captcha first. Guard `solveCaptcha()` with `when()` so a page without a captcha does not break the loop, and re-navigate each attempt (with `visit()` + `gotoAttr()`) if the site regenerates the captcha:
 
 ```php
-use EduLazaro\Larascraper\FileScraper;
 use EduLazaro\Larascraper\Support\Condition;
 
-$result = FileScraper::scrape('https://example.com/protected-document')
-    ->repeatUntil(
-        Condition::captured(),                        // stop once the file is captured
-        fn ($b) => $b
-            ->solveCaptcha('#captcha-img', 'input[name=captcha]')
-            ->submitAndCapture('form', ['expect' => 'application/pdf']),
-        max: 8,
-        delay: 500,
-    )
-    ->run();
-
-if ($result->success && $result->file) {
-    file_put_contents('document.pdf', $result->file);
-}
-```
-
-`Condition::captured()` is `true` as soon as `submitAndCapture()` grabs a file, so the loop stops on success and gives up after `max` attempts if the OCR never lands.
-
-**File behind a viewer + regenerating captcha.** Some sites show a viewer page whose real download URL lives in an `<object data="...">`, and the captcha is regenerated only when you re-enter that flow (a plain `reload()` won't refresh it). Re-navigate each attempt with `visit()` + `gotoAttr()` so every try gets a fresh captcha:
-
-```php
 $result = FileScraper::scrape($viewerUrl)
     ->repeatUntil(
         Condition::captured(),
         fn ($b) => $b
-            ->visit($viewerUrl)                                   // back to the viewer — fresh state
-            ->gotoAttr('object[type*="pdf"], embed[type*="pdf"]', 'data') // → real URL + fresh captcha
-            ->solveCaptcha('img[src*="captcha"]', 'input[name=captcha]')
-            ->submitAndCapture('form', ['expect' => 'application/pdf']),
+            ->visit($viewerUrl)                                          // fresh state each try
+            ->gotoAttr('object[type*="pdf"], embed[type*="pdf"]', 'data') // real URL + fresh captcha
+            ->when(
+                Condition::selectorExists('img[src*="captcha"]'),
+                fn ($c) => $c->solveCaptcha('img[src*="captcha"]', 'input[name=captcha]'),
+            )
+            ->submit('form')
+            ->capture('application/pdf'),
         max: 8,
         delay: 400,
     )
     ->run();
 ```
+
+`Condition::captured()` is true as soon as a file is grabbed, so the loop stops on success and gives up after `max` attempts.
+
+## Reading a captured PDF (text / vision)
+
+Once you have captured a PDF, read its text right inside `handle()` — the same place you use `$this->crawler` for HTML. For a captured file you get `$this->text()` (the PDF's text layer, free) and `$this->vision()` (OCR, for scanned pages):
+
+```php
+use EduLazaro\Larascraper\Scraper;
+
+class LawScraper extends Scraper
+{
+    protected function handle(): array
+    {
+        $text = $this->text();                 // text layer (gs)
+
+        if ($text === '') {                    // scanned PDF? fall back to OCR
+            $text = $this->vision('ai');
+        }
+
+        return ['text' => $text];
+    }
+}
+
+$text = LawScraper::scrape($url)->click('a.pdf')->capture()->run()->data['text'];
+```
+
+- **`$this->text($engine = 'gs')`** reads the PDF's existing text layer. No OCR, fast, free. Engines: `gs` (ghostscript), `poppler` (pdftotext), `smalot` (smalot/pdfparser). Returns `''` for a scanned PDF (no text layer), so you can fall back to vision.
+- **`$this->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
+
+Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotext`/`pdftoppm`, `tesseract`) or, for `vision('ai')`, calls an OpenAI-compatible endpoint; a missing tool fails with a clear message. Configure the `ai` engine with `config/larascraper.php` (`openai_key`, `vision_model`, `vision_lang`, `vision_dpi`) or the `OPENAI_API_KEY` env var.
 
 ## Retry logic
 

@@ -97,6 +97,81 @@ let captchaWorker = null;
 // Condition::captured() check; `file` is base64, returned to PHP as $result->file.
 const capture = { done: false, file: null, contentType: null };
 
+// Buffered file-like responses seen during the run, so a plain click/navigation
+// to a PDF (not only a form submit) can be captured. Filled by the response
+// recorder, consumed by the capture() action.
+const seenResponses = [];
+
+// Is this content-type likely a downloadable file (vs a page resource)?
+function isFileLike(contentType) {
+    const ct = (contentType || '').toLowerCase();
+    if (!ct) return true; // no content-type: could be a file
+    return !(ct.includes('text/html') || ct.includes('text/css')
+        || ct.includes('javascript') || ct.includes('image/')
+        || ct.includes('font') || ct.includes('text/plain'));
+}
+
+// Does the action tree contain a capture action anywhere? Only then do we arm
+// the response recorder, to avoid buffering bytes we do not need.
+function hasCaptureAction(list) {
+    for (const a of (list || [])) {
+        if (a.type === 'capture') return true;
+        if (a.type === 'when' && (hasCaptureAction(a.then) || hasCaptureAction(a.else))) return true;
+        if (a.type === 'repeatUntil' && hasCaptureAction(a.body)) return true;
+    }
+    return false;
+}
+
+// Buffer file-like responses so capture() can grab the binary of whatever the
+// preceding click/navigation triggered (not just a form submit).
+function armResponseRecorder(page) {
+    page.on('response', async (resp) => {
+        if (!isFileLike(resp.headers()['content-type'] || '')) return;
+        try {
+            const buf = await resp.buffer(); // may throw for aborted/forced-download responses
+            if (buf && buf.length > 0) {
+                seenResponses.push({ contentType: resp.headers()['content-type'] || '', buffer: buf });
+            }
+        } catch (e) { /* aborted / non-bufferable (e.g. a forced download): ignore */ }
+    });
+}
+
+// Newest buffered response matching `expect` (a content-type substring; PDFs
+// also match by %PDF magic bytes). Null expect matches any file.
+function pickCaptured(expect) {
+    for (let i = seenResponses.length - 1; i >= 0; i--) {
+        const r = seenResponses[i];
+        const ct = (r.contentType || '').toLowerCase();
+        const magic = String.fromCharCode(...new Uint8Array(r.buffer.slice(0, 4)));
+        const ok = expect
+            ? (ct.includes(String(expect).toLowerCase()) || (String(expect).toLowerCase().includes('pdf') && magic === '%PDF'))
+            : true;
+        if (ok) return r;
+    }
+    return null;
+}
+
+/**
+ * Capture the binary of the response triggered by the preceding action (a click,
+ * navigation or submit that leads to a PDF/file). Unlike submitAndCapture it needs
+ * no <form>: it reads from the response recorder. Waits (bounded) for a matching
+ * response, since the network is async.
+ */
+async function captureResponse(page, action, timeout) {
+    const deadline = Date.now() + (action.timeout || timeout);
+    let match = null;
+    while (Date.now() < deadline) {
+        match = pickCaptured(action.expect);
+        if (match) break;
+        await new Promise(r => setTimeout(r, 100));
+    }
+    if (!match) return false;
+    capture.done = true;
+    capture.file = Buffer.from(match.buffer).toString('base64');
+    capture.contentType = match.contentType || action.expect || null;
+    return true;
+}
+
 /**
  * Submit a form in-page (via fetch) and capture the response if it looks like a
  * file/binary. Returns true when captured. Mirrors how a browser submits the
@@ -148,6 +223,45 @@ async function submitAndCapture(page, action) {
         return true;
     }
     return false;
+}
+
+/**
+ * Submit a form in-page (via fetch) and record the response, so a following
+ * capture() picks it up. The composable replacement for submitAndCapture():
+ * `->submit('form')->capture(['expect' => 'application/pdf'])`.
+ */
+async function submitForm(page, action) {
+    const result = await page.evaluate(async (formSel) => {
+        const form = document.querySelector(formSel);
+        if (!form) return null;
+
+        const body = new URLSearchParams();
+        for (const el of form.querySelectorAll('input[name], select[name], textarea[name]')) {
+            if (el.type === 'submit') continue;
+            body.set(el.name, el.value);
+        }
+
+        const method = (form.getAttribute('method') || 'get').toUpperCase();
+        const dest = new URL(form.getAttribute('action') || location.href, location.href).href;
+
+        const resp = method === 'GET'
+            ? await fetch(dest + (dest.includes('?') ? '&' : '?') + body.toString())
+            : await fetch(dest, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+            });
+
+        const contentType = resp.headers.get('content-type') || '';
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        let bin = '';
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return { contentType, base64: btoa(bin) };
+    }, action.formSelector);
+
+    if (result && result.base64) {
+        seenResponses.push({ contentType: result.contentType || '', buffer: Buffer.from(result.base64, 'base64') });
+    }
 }
 
 /**
@@ -279,6 +393,12 @@ async function runActions(page, actions, timeout) {
             case 'submitAndCapture':
                 await submitAndCapture(page, action);
                 break;
+            case 'submit':
+                await submitForm(page, action);
+                break;
+            case 'capture':
+                await captureResponse(page, action, timeout);
+                break;
             case 'click':
                 await page.waitForSelector(action.selector, { timeout });
                 if (action.waitForNavigation) {
@@ -397,6 +517,12 @@ async function runActions(page, actions, timeout) {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
             '(KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
         );
+
+        // Arm the response recorder before navigating, so capture() can grab a
+        // file the initial load or a later click/navigation triggers.
+        if (hasCaptureAction(actions)) {
+            armResponseRecorder(page);
+        }
 
         const response = await page.goto(url, {
             waitUntil: 'domcontentloaded',
