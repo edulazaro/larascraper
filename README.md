@@ -349,23 +349,27 @@ Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captc
 
 ## Downloading files
 
-Sometimes the result you want is a **file** (a PDF, a ZIP, a report), not HTML. Captured bytes land in `$result->file`. Use the ready-made `FileScraper` (no class needed) or your own scraper.
+When the response is a **file** (a PDF, a ZIP), you extend `Scraper` as usual and work with it inside `handle()` — the captured raw bytes arrive in `$this->file`, exactly like `$this->crawler` holds the HTML. Grab the file in the chain with `capture()`.
 
-### From a click or link (no form)
-
-Click (or navigate) to the file, then `capture()` grabs the binary of the response it triggers:
+### From a click or link
 
 ```php
-use EduLazaro\Larascraper\FileScraper;
+use EduLazaro\Larascraper\Scraper;
 
-$result = FileScraper::scrape($pageUrl)
-    ->click('a.download-pdf')
-    ->capture('application/pdf')   // grab the response; the arg is an optional content-type filter
-    ->run();
+class ReportScraper extends Scraper
+{
+    protected function handle(): array
+    {
+        file_put_contents(storage_path('app/report.pdf'), $this->file); // $this->file = raw bytes
 
-if ($result->success && $result->file) {
-    file_put_contents('report.pdf', $result->file);   // raw bytes
+        return ['bytes' => strlen((string) $this->file)];
+    }
 }
+
+ReportScraper::scrape($pageUrl)
+    ->click('a.download-pdf')
+    ->capture('application/pdf')   // grab the response the click triggers
+    ->run();
 ```
 
 `capture($expect)` records the file-like responses the page produces and keeps the one matching `expect` (a content-type substring like `application/pdf`; PDFs also match by their `%PDF` magic bytes). With no argument it takes the first file-like response. Pair it with `repeatUntil(Condition::captured(), ...)` to retry. It captures files that **render inline** (the browser's PDF viewer); a forced download (`Content-Disposition: attachment`) is not captured.
@@ -375,29 +379,14 @@ if ($result->success && $result->file) {
 When the file only comes back from **submitting a form** (hidden fields, tokens, a session), submit it and capture the response:
 
 ```php
-$result = FileScraper::scrape('https://example.com/report')
-    ->submit('form')
-    ->capture('application/pdf')
-    ->run();
+->submit('form')->capture('application/pdf')
 ```
 
-> `submitAndCapture('form', ['expect' => ...])` does both in one call, but is **deprecated** (removed in 3.0). Prefer `submit()` + `capture()`.
+> `submitAndCapture('form', ['expect' => ...])` did submit + capture in one call, but is **deprecated** (removed in 3.0). Use `submit()` + `capture()`.
 
 ### From a direct URL
 
-If the file sits at a plain URL, skip the browser entirely and fetch it with the `http` driver; the body is the file:
-
-```php
-$bytes = FileScraper::scrape('https://example.com/report.pdf')->driver('http')->run()->html;
-```
-
-Serve any captured file as a download from a controller:
-
-```php
-return response($result->file)
-    ->header('Content-Type', $result->contentType)
-    ->header('Content-Disposition', 'attachment; filename="report.pdf"');
-```
+If the file lives at a plain URL, you do not need the browser: the `http` driver returns the body directly (see [Drivers](#drivers-browser-vs-http)).
 
 ### Behind a captcha
 
@@ -406,7 +395,7 @@ Wrap the capture in `repeatUntil(Condition::captured(), ...)` and solve the capt
 ```php
 use EduLazaro\Larascraper\Support\Condition;
 
-$result = FileScraper::scrape($viewerUrl)
+ReportScraper::scrape($viewerUrl)
     ->repeatUntil(
         Condition::captured(),
         fn ($b) => $b
