@@ -184,13 +184,22 @@ class HttpRunner implements Runner
                 $response = $request->{$verb}($this->url, $payload);
             }
 
+            $body = $response->body();
+            $contentType = $response->header('Content-Type') ?: null;
+
+            // A binary/file response (a PDF, a ZIP, an image...) is exposed as a
+            // captured file so `$result->file` works with the http driver, exactly
+            // like capture() does on the browser driver. Text responses (HTML,
+            // JSON, XML) stay in `html`.
+            $isBinary = $this->looksBinary($contentType, $body);
+
             return [
                 'success' => $response->successful(),
                 'status' => $response->status(),
-                'html' => $response->body(),
+                'html' => $isBinary ? '' : $body,
                 'error' => $response->successful() ? null : "HTTP {$response->status()}",
-                'file' => null,
-                'contentType' => $response->header('Content-Type') ?: null,
+                'file' => $isBinary ? base64_encode($body) : null,
+                'contentType' => $contentType,
                 'cookies' => $this->parseSetCookies($response->headers()['Set-Cookie'] ?? []),
             ];
         } catch (Throwable $e) {
@@ -204,6 +213,52 @@ class HttpRunner implements Runner
                 'cookies' => [],
             ];
         }
+    }
+
+    /**
+     * Decide whether a response body should be treated as a downloadable file
+     * (returned via `file`) rather than text (returned via `html`).
+     *
+     * Textual types (text/*, JSON, XML, SVG) stay in `html`. Known file families
+     * (PDF, archives, office docs, images, audio, video, fonts) become a file.
+     * When the type is missing, a few magic numbers are sniffed.
+     *
+     * @param string|null $contentType The response Content-Type header.
+     * @param string $body The response body.
+     * @return bool
+     */
+    protected function looksBinary(?string $contentType, string $body): bool
+    {
+        $type = strtolower(trim(explode(';', (string) $contentType)[0]));
+
+        if ($type !== '') {
+            if (str_starts_with($type, 'text/')) {
+                return false;
+            }
+
+            $textual = [
+                'application/json', 'application/xml', 'application/xhtml+xml',
+                'application/javascript', 'application/ld+json',
+                'application/rss+xml', 'application/atom+xml', 'image/svg+xml',
+            ];
+            if (in_array($type, $textual, true)) {
+                return false;
+            }
+
+            return str_starts_with($type, 'application/')
+                || str_starts_with($type, 'image/')
+                || str_starts_with($type, 'audio/')
+                || str_starts_with($type, 'video/')
+                || str_starts_with($type, 'font/');
+        }
+
+        // No Content-Type: sniff a few common binary signatures.
+        return str_starts_with($body, '%PDF')            // PDF
+            || str_starts_with($body, "PK\x03\x04")      // ZIP / office
+            || str_starts_with($body, "\x89PNG\x0d\x0a") // PNG
+            || str_starts_with($body, 'GIF8')            // GIF
+            || str_starts_with($body, "\xFF\xD8\xFF")    // JPEG
+            || str_starts_with($body, '%!PS');           // PostScript
     }
 
     /**

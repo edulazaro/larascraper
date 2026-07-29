@@ -9,7 +9,10 @@
         "symfony/dom-crawler": "^7.2"
     },
     "suggest": {
-        "guzzlehttp/guzzle": "Required only for the lightweight 'http' driver (->driver('http')), which scrapes via a plain HTTP request instead of a headless browser."
+        "guzzlehttp/guzzle": "Required only for the lightweight 'http' driver (->driver('http')), which scrapes via a plain HTTP request instead of a headless browser.",
+        "ext-ghostscript": "System package ghostscript (the 'gs' binary): default engine for CapturedFile->text() (PDF text layer). Install via your OS, e.g. apt-get install ghostscript. Composer cannot install it.",
+        "ext-poppler-utils": "System package poppler-utils (pdftotext, pdftoppm): needed for CapturedFile->text('poppler') and for rasterizing pages in CapturedFile->vision() (both 'ai' and 'tesseract'). Install via your OS, e.g. apt-get install poppler-utils. Composer cannot install it.",
+        "ext-tesseract-ocr": "System package tesseract-ocr (the 'tesseract' binary): offline OCR for CapturedFile->vision('tesseract'). Install via your OS, e.g. apt-get install tesseract-ocr. Composer cannot install it."
     },
     "autoload": {
         "psr-4": {

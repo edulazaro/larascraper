@@ -386,7 +386,23 @@ When the file only comes back from **submitting a form** (hidden fields, tokens,
 
 ### From a direct URL
 
-If the file lives at a plain URL, you do not need the browser: the `http` driver returns the body directly (see [Drivers](#drivers-browser-vs-http)).
+If the file lives at a plain URL, you do not need the browser: the `http` driver downloads it directly. A **binary** response (a PDF, a ZIP, an image...) is exposed as `$result->file` (a `CapturedFile`), exactly like `capture()` on the browser driver; text responses (HTML, JSON, XML) still arrive in `$result->html`.
+
+```php
+use EduLazaro\Larascraper\Scraper;
+
+class LawScraper extends Scraper
+{
+    protected string $driver = 'http';
+
+    protected function handle(): string
+    {
+        return $this->file?->text() ?: '';   // $this->file is the downloaded PDF
+    }
+}
+
+$text = LawScraper::scrape('https://example.com/law.pdf')->run()->data;
+```
 
 ### Behind a captcha
 
@@ -443,6 +459,16 @@ $text = LawScraper::scrape($url)->click('a.pdf')->capture()->run()->data;
 - **`$this->file->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
 
 Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotext`/`pdftoppm`, `tesseract`) or, for `vision('ai')`, calls an OpenAI-compatible endpoint; a missing tool fails with a clear message. Configure the `ai` engine with `config/larascraper.php` (`openai_key`, `vision_model`, `vision_lang`, `vision_dpi`) or the `OPENAI_API_KEY` env var.
+
+> **System requirements (PDF engines).** These are OS packages, not PHP/Composer dependencies, so Composer can't install them for you — add them to your image (e.g. your Dockerfile) if you use these engines. They're also listed under `suggest` in this package's `composer.json`.
+>
+> | Feature | Binary | Install (Debian/Ubuntu) |
+> |---|---|---|
+> | `text()` (default `gs`) | `gs` | `apt-get install ghostscript` |
+> | `text('poppler')` and `vision()` page rasterization | `pdftotext`, `pdftoppm` | `apt-get install poppler-utils` |
+> | `vision('tesseract')` | `tesseract` | `apt-get install tesseract-ocr` |
+>
+> Note `vision('ai')` still needs **poppler-utils**: it rasterizes each page with `pdftoppm` before sending it to the cloud vision model.
 
 ## Retry logic
 

@@ -212,7 +212,7 @@ class CapturedFile
                 'messages' => [
                     [
                         'role' => 'system',
-                        'content' => 'Extract the literal text from this image, preserving the structure, order and hierarchy (headings, subheadings, lists). Do NOT translate, comment or interpret. Output only the text present in the image. If the image has no readable text, return an empty string.',
+                        'content' => 'Extract the literal text from this image, preserving the structure, order and hierarchy (headings, subheadings, lists). Do NOT translate, comment or interpret. Do NOT wrap the output in markdown code fences or backticks. Output only the text present in the image. If the image has no readable text, return an empty string.',
                     ],
                     [
                         'role' => 'user',
@@ -228,7 +228,9 @@ class CapturedFile
             throw new RuntimeException('vision("ai") request failed: HTTP ' . $response->status() . ' ' . $response->body());
         }
 
-        return $this->normalizeText((string) $response->json('choices.0.message.content'));
+        $content = $this->stripCodeFences((string) $response->json('choices.0.message.content'));
+
+        return $this->normalizeText($content);
     }
 
     // ------------------------------------------------------------------
@@ -266,6 +268,19 @@ class CapturedFile
     protected function extractConfig(string $key, mixed $default = null): mixed
     {
         return function_exists('config') ? config("larascraper.{$key}", $default) : $default;
+    }
+
+    /**
+     * Drop markdown code-fence lines (```), which vision models sometimes wrap a
+     * page in despite the instruction not to. Fence-only lines are removed; the
+     * content between them is kept.
+     */
+    protected function stripCodeFences(string $text): string
+    {
+        $lines = preg_split('/\r\n|\r|\n/', $text) ?: [];
+        $kept = array_filter($lines, fn ($line) => ! preg_match('/^\s*`{3,}[a-zA-Z0-9]*\s*$/', $line));
+
+        return implode("\n", $kept);
     }
 
     /**

@@ -28,6 +28,36 @@ class HttpRunnerTest extends BaseTestCase
         $this->assertSame('text/html; charset=utf-8', $result['contentType']);
     }
 
+    public function test_a_binary_response_is_exposed_as_a_captured_file(): void
+    {
+        Http::fake([
+            '*' => Http::response('%PDF-1.4 fake bytes', 200, [
+                'Content-Type' => 'application/pdf',
+            ]),
+        ]);
+
+        $result = HttpRunner::on('https://example.com/law.pdf')->run();
+
+        $this->assertTrue($result['success']);
+        $this->assertSame('', $result['html']);                       // binary does not land in html
+        $this->assertSame('application/pdf', $result['contentType']);
+        $this->assertSame('%PDF-1.4 fake bytes', base64_decode($result['file']));
+    }
+
+    public function test_a_json_response_is_kept_as_text(): void
+    {
+        Http::fake([
+            '*' => Http::response('{"ok":true}', 200, [
+                'Content-Type' => 'application/json',
+            ]),
+        ]);
+
+        $result = HttpRunner::on('https://example.com/api')->run();
+
+        $this->assertSame('{"ok":true}', $result['html']);
+        $this->assertNull($result['file']);
+    }
+
     public function test_it_reports_a_failed_status(): void
     {
         Http::fake([
