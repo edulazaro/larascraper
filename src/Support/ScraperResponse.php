@@ -22,8 +22,8 @@ class ScraperResponse
     /** @var mixed The parsed data returned by the scraper's handle() method (HTML scrapes). */
     public mixed $data = null;
 
-    /** @var string|null The raw bytes of a captured file/binary (e.g. a PDF), null otherwise. */
-    public ?string $file = null;
+    /** @var CapturedFile|null A captured file (e.g. a PDF), or null. Read it with ->text()/->vision()/->bytes(). */
+    public ?CapturedFile $file = null;
 
     /** @var string|null The content type of the captured file (e.g. 'application/pdf'). */
     public ?string $contentType = null;
@@ -40,7 +40,7 @@ class ScraperResponse
      * @param string|null $error Error message, if any.
      * @param string $html The fetched HTML.
      * @param mixed $data The parsed data from handle().
-     * @param string|null $file Raw bytes of a captured file/binary.
+     * @param CapturedFile|null $file A captured file (a PDF, etc.).
      * @param string|null $contentType Content type of the captured file.
      * @param array<string, string> $cookies Response cookies (name => value).
      */
@@ -50,7 +50,7 @@ class ScraperResponse
         string|null $error = null,
         string $html = '',
         mixed $data = null,
-        ?string $file = null,
+        ?CapturedFile $file = null,
         ?string $contentType = null,
         array $cookies = [],
     ) {

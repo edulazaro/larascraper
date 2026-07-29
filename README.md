@@ -122,7 +122,7 @@ if ($result->success) {
 | `$result->error` | The error message when `success` is `false`, otherwise `null`. |
 | `$result->html` | The raw HTML that was fetched. |
 | `$result->data` | Whatever your `handle()` method returned (usually an array). |
-| `$result->file` | The raw bytes of a captured file/binary (e.g. a PDF), or `null`. See [Downloading files](#downloading-files). |
+| `$result->file` | The captured file as a `CapturedFile` (read it with `->text()`/`->vision()`/`->bytes()`/`->save()`), or `null`. See [Downloading files](#downloading-files). |
 | `$result->contentType` | The content type of the captured file (e.g. `application/pdf`). |
 
 A response carries either `data` (parsed HTML) or `file` (a captured binary), depending on the scrape.
@@ -360,9 +360,9 @@ class ReportScraper extends Scraper
 {
     protected function handle(): array
     {
-        file_put_contents(storage_path('app/report.pdf'), $this->file); // $this->file = raw bytes
+        $this->file->save(storage_path('app/report.pdf'));   // $this->file is a CapturedFile
 
-        return ['bytes' => strlen((string) $this->file)];
+        return ['bytes' => $this->file->size()];
     }
 }
 
@@ -417,30 +417,30 @@ ReportScraper::scrape($viewerUrl)
 
 ## Reading a captured PDF (text / vision)
 
-Once you have captured a PDF, read its text right inside `handle()` — the same place you use `$this->crawler` for HTML. For a captured file you get `$this->text()` (the PDF's text layer, free) and `$this->vision()` (OCR, for scanned pages):
+Once you have captured a PDF, read its text right inside `handle()`, the same place you use `$this->crawler` for HTML. The captured file is `$this->file`, with `->text()` (the PDF's text layer, free) and `->vision()` (OCR, for scanned pages):
 
 ```php
 use EduLazaro\Larascraper\Scraper;
 
 class LawScraper extends Scraper
 {
-    protected function handle(): array
+    protected function handle(): string
     {
-        $text = $this->text();                 // text layer (gs)
+        $text = $this->file->text();           // text layer (gs)
 
         if ($text === '') {                    // scanned PDF? fall back to OCR
-            $text = $this->vision('ai');
+            $text = $this->file->vision('ai');
         }
 
-        return ['text' => $text];
+        return $text;
     }
 }
 
-$text = LawScraper::scrape($url)->click('a.pdf')->capture()->run()->data['text'];
+$text = LawScraper::scrape($url)->click('a.pdf')->capture()->run()->data;
 ```
 
-- **`$this->text($engine = 'gs')`** reads the PDF's existing text layer. No OCR, fast, free. Engines: `gs` (ghostscript), `poppler` (pdftotext), `smalot` (smalot/pdfparser). Returns `''` for a scanned PDF (no text layer), so you can fall back to vision.
-- **`$this->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
+- **`$this->file->text($engine = 'gs')`** reads the PDF's existing text layer. No OCR, fast, free. Engines: `gs` (ghostscript), `poppler` (pdftotext), `smalot` (smalot/pdfparser). Returns `''` for a scanned PDF (no text layer), so you can fall back to vision.
+- **`$this->file->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
 
 Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotext`/`pdftoppm`, `tesseract`) or, for `vision('ai')`, calls an OpenAI-compatible endpoint; a missing tool fails with a clear message. Configure the `ai` engine with `config/larascraper.php` (`openai_key`, `vision_model`, `vision_lang`, `vision_dpi`) or the `OPENAI_API_KEY` env var.
 

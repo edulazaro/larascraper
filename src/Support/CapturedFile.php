@@ -1,37 +1,70 @@
 <?php
 
-namespace EduLazaro\Larascraper\Concerns;
+namespace EduLazaro\Larascraper\Support;
 
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
- * Turn a captured binary (a PDF from capture()/submitAndCapture) into text,
- * inside a scraper's handle(). Mirrors how you read a page with $this->crawler:
- * for a captured PDF you read the text with $this->text() (text layer, free) or
- * $this->vision() (OCR, for scanned pages).
+ * A file captured during a scrape (a PDF, etc.), exposed as `$this->file` inside
+ * a scraper's handle(). Turn it into text with:
  *
- * Everything runs in PHP, AFTER the browser step. It shells out to system tools
- * (ghostscript, poppler, tesseract) and/or a vision model; each engine fails
- * with a clear message if its tool is missing.
+ *   $this->file->text()          // the PDF's text layer (fast, free)
+ *   $this->file->vision('ai')    // OCR, for scanned pages
+ *
+ * or handle the bytes with bytes() / save(). Extraction runs in PHP: it shells
+ * out to system tools (ghostscript, poppler, tesseract) and/or a vision model;
+ * each engine fails with a clear message if its tool is missing.
  */
-trait ExtractsContent
+class CapturedFile
 {
+    public function __construct(
+        protected string $bytes,
+        protected ?string $contentType = null,
+    ) {
+    }
+
+    /** The raw bytes of the file. */
+    public function bytes(): string
+    {
+        return $this->bytes;
+    }
+
+    /** The content type, e.g. 'application/pdf', or null. */
+    public function contentType(): ?string
+    {
+        return $this->contentType;
+    }
+
+    /** Size in bytes. */
+    public function size(): int
+    {
+        return strlen($this->bytes);
+    }
+
+    /** Write the bytes to disk. Returns the path. */
+    public function save(string $path): string
+    {
+        file_put_contents($path, $this->bytes);
+
+        return $path;
+    }
+
     /**
-     * Extract the TEXT LAYER of the captured PDF. No OCR: reads the text the PDF
-     * already contains. Fast and free. Returns '' for a scanned PDF (no text
-     * layer) or when nothing was captured, so you can fall back to vision().
+     * Extract the TEXT LAYER of the PDF. No OCR: reads the text the PDF already
+     * contains. Fast and free. Returns '' for a scanned PDF (no text layer), so
+     * you can fall back to vision().
      *
      * @param string $engine 'gs' (ghostscript, default), 'poppler' (pdftotext)
      *        or 'smalot' (smalot/pdfparser, pure PHP).
      */
     public function text(string $engine = 'gs'): string
     {
-        if ($this->file === null || $this->file === '') {
+        if ($this->bytes === '') {
             return '';
         }
 
-        return $this->withTempPdf($this->file, fn (string $pdf) => match ($engine) {
+        return $this->withTempPdf(fn (string $pdf) => match ($engine) {
             'gs' => $this->textWithGhostscript($pdf),
             'poppler' => $this->textWithPoppler($pdf),
             'smalot' => $this->textWithSmalot($pdf),
@@ -40,19 +73,18 @@ trait ExtractsContent
     }
 
     /**
-     * OCR the captured PDF: rasterize each page to an image, then read the text
-     * from the image. For scanned PDFs that have no text layer. Slower, and the
-     * 'ai' engine costs money.
+     * OCR the PDF: rasterize each page to an image and read it. For scanned PDFs
+     * that have no text layer. Slower, and the 'ai' engine costs money.
      *
      * @param string $engine 'ai' (vision model, default) or 'tesseract'.
      */
     public function vision(string $engine = 'ai'): string
     {
-        if ($this->file === null || $this->file === '') {
+        if ($this->bytes === '') {
             return '';
         }
 
-        return $this->withTempPdf($this->file, function (string $pdf) use ($engine) {
+        return $this->withTempPdf(function (string $pdf) use ($engine) {
             $images = $this->rasterize($pdf);
 
             $pages = [];
@@ -159,7 +191,7 @@ trait ExtractsContent
 
     /**
      * OCR one page image with a vision model (OpenAI-compatible chat/completions
-     * with an image_url). Same shape as the reference dicecheck VisionOcr.
+     * with an image_url).
      */
     protected function ocrWithAi(string $image): string
     {
@@ -203,11 +235,11 @@ trait ExtractsContent
     // Helpers
     // ------------------------------------------------------------------
 
-    /** Write the captured bytes to a temp PDF, run $fn($path), always clean up. */
-    protected function withTempPdf(string $bytes, callable $fn): string
+    /** Write the bytes to a temp PDF, run $fn($path), always clean up. */
+    protected function withTempPdf(callable $fn): string
     {
         $tmp = tempnam(sys_get_temp_dir(), 'lscr_') . '.pdf';
-        file_put_contents($tmp, $bytes);
+        file_put_contents($tmp, $this->bytes);
 
         try {
             return (string) $fn($tmp);
@@ -238,8 +270,7 @@ trait ExtractsContent
 
     /**
      * Collapse whitespace and repair the classic smalot/pdfparser double-encoded
-     * UTF-8 mojibake ("nÃºmero" for "número"). Borrowed from the dicecheck
-     * PdfTextExtractor.
+     * UTF-8 mojibake ("nÃºmero" for "número").
      */
     protected function normalizeText(string $text): string
     {
