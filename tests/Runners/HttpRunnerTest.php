@@ -3,9 +3,12 @@
 namespace EduLazaro\Larascraper\Tests\Runners;
 
 use EduLazaro\Larascraper\Runners\HttpRunner;
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 use EduLazaro\Larascraper\Tests\BaseTestCase;
 use EduLazaro\Larascraper\Tests\Support\TestScraper;
 use Illuminate\Support\Facades\Http;
+use InvalidArgumentException;
 use LogicException;
 
 class HttpRunnerTest extends BaseTestCase
@@ -86,9 +89,7 @@ class HttpRunnerTest extends BaseTestCase
             '*' => Http::response('<html><head><title>Bike 4</title></head></html>', 200),
         ]);
 
-        $result = TestScraper::scrape('https://shop.test/bikes/4')
-            ->driver('http')
-            ->run();
+        $result = TestScraper::run('https://shop.test/bikes/4');
 
         $this->assertTrue($result->success);
         $this->assertSame(['title' => 'Bike 4'], $result->data);
@@ -96,9 +97,9 @@ class HttpRunnerTest extends BaseTestCase
 
     public function test_an_unknown_driver_is_rejected(): void
     {
-        $this->expectException(\InvalidArgumentException::class);
+        $this->expectException(InvalidArgumentException::class);
 
-        TestScraper::scrape('https://shop.test')->driver('carrier-pigeon');
+        TestScraper::make()->scrape('https://shop.test')->driver('carrier-pigeon');
     }
 
     public function test_http_driver_with_actions_fails_fast(): void
@@ -106,15 +107,20 @@ class HttpRunnerTest extends BaseTestCase
         Http::fake();
 
         // A programming error (actions on the http driver) must surface
-        // immediately, not be swallowed by the retry loop.
+        // immediately from fetch(), not be swallowed by the retry loop.
+        $scraper = new class extends Scraper {
+            protected string $driver = 'http';
+            protected int $tries = 1;
+
+            protected function handle(string $url): ScraperResponse
+            {
+                return $this->scrape($url)->click('#go')->run();
+            }
+        };
+
         $this->expectException(LogicException::class);
 
-        TestScraper::scrape('https://shop.test')
-            ->driver('http')
-            ->click('#go')
-            ->run();
-
-        Http::assertNothingSent();
+        $scraper->callHandle(['https://shop.test']);
     }
 
     public function test_it_sends_a_post_with_a_form_body(): void
@@ -168,10 +174,19 @@ class HttpRunnerTest extends BaseTestCase
     {
         Http::fake(['*' => Http::response('<html><head><title>Bike 4</title></head></html>', 200)]);
 
-        $result = TestScraper::scrape('https://shop.test/bikes/4')
-            ->driver('http')
-            ->post(['id' => 4], 'form')
-            ->run();
+        // The POST wiring is exercised end to end from inside a scraper's
+        // handle(), through the FetchBuilder's post() setter.
+        $scraper = new class extends Scraper {
+            protected string $driver = 'http';
+            protected int $tries = 1;
+
+            protected function handle(string $url): ScraperResponse
+            {
+                return $this->scrape($url)->post(['id' => 4], 'form')->run();
+            }
+        };
+
+        $result = $scraper->callHandle(['https://shop.test/bikes/4']);
 
         $this->assertTrue($result->success);
         Http::assertSent(fn (\Illuminate\Http\Client\Request $r) => $r->method() === 'POST' && (string) $r['id'] === '4');

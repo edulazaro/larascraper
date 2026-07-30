@@ -9,9 +9,35 @@
 
 ## Introduction
 
-Larascrape allows you to scrape any URL using Laravel. It uses Puppeteer under the hood. Unlikely Sapatie Crawler or Browsershot, this scraper focuses on simplicity. While Spatie Crawler can leave opened many Chromium instances, filling your server memory, Larascrape starts the scraping process using Node, making sure the Chromium instance is closed before existint.
+Larascraper lets you scrape any URL from Laravel. It uses Puppeteer under the hood but focuses on simplicity: unlike Spatie Crawler or Browsershot, which can leave many Chromium instances open and fill your server memory, Larascraper drives the scrape through Node and makes sure the Chromium instance is closed before exiting.
 
-Unlikely Spatie Crawler, it supports Proxy authentication and in general is faster.
+Unlike Spatie Crawler, it also supports proxy authentication and is generally faster.
+
+The design splits fetching from parsing. A **Scraper** orchestrates the request (retries, proxy, browser actions) and decides whether the scrape succeeded by looking at the content; a **Crawler** parses the HTML into data; and `run()` hands you back a small `ScraperResponse`. HTTP 200 is not the same as "the scrape worked" (a 200 can be a captcha or a "no results" page), so success is content based and lives in the scraper, not in the HTTP status.
+
+> **Coming from v2?** v3 is a breaking change. Fetching now lives on `$this->scrape(...)` inside `handle()`, parsing moves into `Crawler` classes, and `run()` returns a minimal `{data, success, error}` `ScraperResponse`. The older v2 docs live on the v2 git tags.
+
+## Contents
+
+- [Install](#install)
+- [Drivers (browser vs HTTP)](#drivers-browser-vs-http)
+- [Basic Usage](#basic-usage)
+- [Writing a Crawler](#writing-a-crawler)
+- [The ScraperResponse](#the-scraperresponse)
+- [Handling failures (RequestException)](#handling-failures-requestexception)
+- [Passing parameters (run / with / make)](#passing-parameters-run--with--make)
+- [Configuration](#configuration) (proxy, timeout, headers, retries)
+- [POST requests, body and cookies (HTTP driver)](#post-requests-body-and-cookies-http-driver)
+- [Interacting with the page (actions)](#interacting-with-the-page-actions)
+- [Conditional flow (when / repeatUntil)](#conditional-flow-when--repeatuntil)
+- [Solving simple captchas](#solving-simple-captchas)
+- [Downloading files](#downloading-files)
+- [Reading a captured PDF (text / vision)](#reading-a-captured-pdf-text--vision)
+- [Artisan Commands](#artisan-commands)
+- [LaraClaude integration](#laraclaude-integration)
+- [Testing a scraper](#testing-a-scraper)
+- [Issues](#issues)
+- [Examples](#examples)
 
 ## Install
 
@@ -45,30 +71,33 @@ Please note that when you run the scraper via a scheduled task, chances are a no
 
 ## Drivers (browser vs HTTP)
 
-Larascraper has **two engines**, chosen with `->driver(...)`. Worth knowing first, because every example below runs on one of them:
+Larascraper has **two engines**, chosen with `->driver(...)` on the fetch chain (or the `$driver` class property). Worth knowing first, because every example below runs on one of them:
 
 - **`browser`** (default): a real headless browser (Puppeteer / Chromium). Renders JavaScript and runs [actions](#interacting-with-the-page-actions) (click, type, solve captchas, capture files). Slower, and needs Node + Chrome.
 - **`http`**: a plain HTTP request (Laravel's HTTP client). Fast, no browser, but **cannot** render JS or run actions. Best for static pages, APIs and direct file URLs.
 
+You pick the driver inside `handle()`, on the chain that `$this->scrape($url)` returns:
+
 ```php
 // Browser (Puppeteer), the default:
-BikeScraper::scrape('https://whatever.com/bikes/4')->run();
+$this->scrape('https://whatever.com/bikes/4')->run();
 
 // Plain HTTP, no browser:
-BikeScraper::scrape('https://whatever.com/bikes/4')->driver('http')->run();
+$this->scrape('https://whatever.com/bikes/4')->driver('http')->run();
 ```
+
+You can also make a scraper HTTP-only by setting the property once (`protected string $driver = 'http';`) or per call with `with(driver: 'http')`.
 
 | Driver | Renders JS | Actions | Speed | Needs Node/Chrome |
 |---|---|---|---|---|
 | `browser` (default) | ✅ | ✅ | Slower | ✅ |
 | `http` | ❌ | ❌ | Fast | ❌ |
 
-Both drivers share the same fluent API (`proxy()`, `timeout()`, `headers()`) and return the same `ScraperResponse`, so your `handle()` doesn't change. Combining `->driver('http')` with actions (`click()`, `type()`, …) throws a `LogicException`. POST, body and cookie options for the `http` driver have [their own section](#post-requests-body-and-cookies-http-driver) below.
+Both drivers share the same fetch chain (`proxy()`, `timeout()`, `headers()`, the terminals) and both `->run()` into the same `ScraperResponse`, so your `handle()` stays the same shape. Combining `->driver('http')` with actions (`click()`, `type()`, ...) throws a `LogicException`. POST, body and cookie options for the `http` driver have [their own section](#post-requests-body-and-cookies-http-driver) below.
 
 > The `http` driver uses Laravel's HTTP client (Guzzle). If it isn't installed, run `composer require guzzlehttp/guzzle`.
 
 ## Basic Usage
-
 
 Create a scraper class (manually or via the built-in command):
 
@@ -78,166 +107,417 @@ php artisan make:scraper BikeScraper
 
 This generates a file like:
 
+```php
+namespace App\Scrapers;
+
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
+class BikeScraper extends Scraper
+{
+    protected function handle(string $url): ScraperResponse
+    {
+        return $this->scrape($url)->run();
+    }
+}
+```
+
+Inside `handle()`, `$this->scrape($url)` starts a fetch chain and the terminal decides what you get back. A bare `->run()` returns the raw HTML wrapped in a `ScraperResponse`. To turn that page into structured data, chain a **Crawler** class:
 
 ```php
 namespace App\Scrapers;
 
 use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 
 class BikeScraper extends Scraper
+{
+    protected function handle(string $url): ScraperResponse
+    {
+        return $this->scrape($url)
+            ->crawl(BikeCrawler::class)   // parse the fetched HTML in a Crawler
+            ->run();
+    }
+}
+```
+
+The Crawler is a plain class that only knows about HTML. It reads the document with `$this->filter(...)` (a Symfony DomCrawler) and returns whatever data you want:
+
+```php
+namespace App\Scrapers\Crawlers;
+
+use EduLazaro\Larascraper\Crawler;
+
+class BikeCrawler extends Crawler
 {
     protected function handle(): array
     {
         return [
-            'title' => $this->crawler->filter('title')->text('')
+            'name'  => $this->filter('h1')->text(''),
+            'price' => $this->filter('.price')->text(''),
+            'specs' => $this->filter('ul.specs li')->each(fn ($li) => trim($li->text(''))),
         ];
     }
 }
 ```
 
-You can now scrape a URL like this:
+Now run the scraper from anywhere with the static `run()` entry point:
 
 ```php
 use App\Scrapers\BikeScraper;
 
-$result = BikeScraper::scrape('https://whatever.com/bikes/4')
-    ->proxy('ip:port', 'username', 'password') // Optional
-    ->timeout(10000) // Optional timeout in ms
-    ->headers(['Accept-Language' => 'en']) // Optional headers
-    ->run();
+$result = BikeScraper::run('https://shop.com/bikes/4');
 
 if ($result->success) {
-    dd($result->data); // The array returned by handle()
-} else {
-    dd($result->status, $result->error);
+    $bike = $result->data;   // ['name' => ..., 'price' => ..., 'specs' => [...]]
 }
 ```
 
-`run()` returns a `ScraperResponse` value object so you can tell a failed fetch from an empty result:
+`BikeScraper::run($url)` is the outside entry point; the fetch chain (`$this->scrape($url)->crawl(...)->run()`) lives **inside** `handle()`. That is the whole loop: a Scraper to fetch, a Crawler to parse, and a `ScraperResponse` to read.
+
+If you just need one or two values and don't want a Crawler class, pass a CSS selector to `crawl()` and use the inline terminals `text()` / `texts()`:
+
+```php
+protected function handle(string $url): array
+{
+    return $this->scrape($url)
+        ->crawl('.bike-card h3')   // a CSS selector, not a class
+        ->texts();                 // string[] of every match (text() for the first)
+}
+```
+
+## Writing a Crawler
+
+A Crawler is parsing only: it receives HTML and extracts data, with no idea how that HTML was fetched. That makes it reusable across scrapers and easy to test against a fixture.
+
+You extend `EduLazaro\Larascraper\Crawler` and implement `handle()`. Inside it you have:
+
+- **`$this->filter($cssSelector)`** returns a Symfony `DomCrawler` node list, so you can chain `->text('')`, `->attr('href')`, `->each(...)`, `->count()`, and everything DomCrawler offers.
+- **`$this->html()`** returns the full HTML of the document, if you need the raw string.
+
+```php
+namespace App\Scrapers\Crawlers;
+
+use EduLazaro\Larascraper\Crawler;
+
+class BikeCrawler extends Crawler
+{
+    protected function handle(): array
+    {
+        return [
+            'name'  => $this->filter('h1')->text(''),
+            'price' => $this->filter('.price')->text(''),
+            'url'   => $this->filter('a.buy')->attr('href'),
+        ];
+    }
+}
+```
+
+### Signalling a content failure
+
+A 200 response can still be a captcha wall, a block page, or an empty result set. When a Crawler notices the page did not yield what it needed, it throws a `ScrapeException` whose message is the error code:
+
+```php
+use EduLazaro\Larascraper\Crawler;
+use EduLazaro\Larascraper\Exceptions\ScrapeException;
+
+class BikeCrawler extends Crawler
+{
+    protected function handle(): array
+    {
+        if ($this->filter('h1.product-title')->count() === 0) {
+            throw new ScrapeException('no_product');   // captcha / wrong layout / gone
+        }
+
+        return ['name' => $this->filter('h1.product-title')->text('')];
+    }
+}
+```
+
+The `crawl(BikeCrawler::class)->run()` terminal **catches** that `ScrapeException` and folds it into a `ScraperResponse` with `success = false` and `error = 'no_product'`. It does not bubble out of `run()`; the caller branches on `$result->success` (see [Handling failures](#handling-failures-requestexception)).
+
+You can drive the same Crawler against raw HTML directly, which is handy in tests:
+
+```php
+$data = (new BikeCrawler($html))->parse();
+```
+
+## The ScraperResponse
+
+`run()` (and `with(...)->run()`) always returns a `ScraperResponse`, a small value object with exactly three fields:
 
 | Property | Description |
 |---|---|
-| `$result->success` | `true` when the page loaded (and any actions ran) without error. |
-| `$result->status` | The HTTP status code. |
-| `$result->error` | The error message when `success` is `false`, otherwise `null`. |
-| `$result->html` | The raw HTML that was fetched. |
-| `$result->data` | Whatever your `handle()` method returned (usually an array). |
-| `$result->file` | The captured file as a `CapturedFile` (read it with `->text()`/`->vision()`/`->bytes()`/`->save()`), or `null`. See [Downloading files](#downloading-files). |
-| `$result->contentType` | The content type of the captured file (e.g. `application/pdf`). |
+| `$result->data` | What the scrape produced: a Crawler's parsed data, a raw value returned from `handle()`, or the raw HTML for a bare `->run()`. |
+| `$result->success` | `true` when the scrape succeeded at the **content** level. Defaults to `true`. |
+| `$result->error` | A scrape-level error code (`'captcha'`, `'no_results'`, ...) when `success` is `false`, otherwise `null`. It is never an HTTP status. |
 
-A response carries either `data` (parsed HTML) or `file` (a captured binary), depending on the scrape.
+### How `run()` normalizes what `handle()` returns
 
-> **Upgrading from 1.x:** `run()` used to return the `handle()` value directly. It now returns a `ScraperResponse`; read your parsed data from `$result->data`.
+`handle()` never has to build a `ScraperResponse` by hand. `run()` wraps whatever it returns:
 
-You can pass parameters to the `run` method as long as they are handled:
+- **a raw value** (a string, an array, ...) becomes `ScraperResponse(data: $value, success: true)`.
+- **a `ScraperResponse`** (from a `crawl(Class)->run()` terminal, or from `$this->fail()` / `$this->ok()`) passes through unchanged.
+- **`return $this->fail('no_results')`** produces `ScraperResponse(success: false, error: 'no_results')`. No `new`, no `throw`.
+- **`throw new ScrapeException('no_results')`** inside `handle()` or a Crawler is caught and folded into that same failed response. It behaves exactly like `fail()`, for failures raised deep in nested code.
+- **`return $this->ok($data)`** is an explicit success (identical to returning `$data` raw, provided for symmetry).
 
 ```php
-namespace App\Scrapers;
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 
+class LawScraper extends Scraper
+{
+    protected function handle(string $url): array|ScraperResponse
+    {
+        $text = trim($this->scrape($url)->capture()->file()->text());
+
+        if ($text === '') {
+            return $this->fail('no_text');   // success = false, error = 'no_text'
+        }
+
+        return ['text' => $text];            // success = true, data = ['text' => ...]
+    }
+}
+```
+
+### Where the HTTP facts live
+
+The `ScraperResponse` deliberately does **not** carry HTTP facts (status, cookies, the raw html, a captured binary). Those belong to the request layer, exposed inside `handle()` as **`$this->request`** (a `RequestResponse`):
+
+```php
+protected function handle(string $url): array
+{
+    $data = $this->scrape($url)->crawl(BikeCrawler::class)->run()->data;
+
+    // HTTP-level facts of the last fetch, if you need them:
+    $status  = $this->request->status;      // 200
+    $cookies = $this->request->cookies;     // ['session' => '...']
+
+    return ['data' => $data, 'status' => $status];
+}
+```
+
+`$this->request` is a `RequestResponse` with `status`, `error`, `html`, `file`, `contentType` and `cookies`. It is the internal HTTP result; `success`/`error` on the `ScraperResponse` are the scraper's own content judgement (a `status = 200` can still be `success = false, error = 'captcha'`). If you need any HTTP fact on the way out, fold it into `data`.
+
+## Handling failures (RequestException)
+
+There are two layers of failure, but the caller only ever catches **one** exception:
+
+- **Request-level failure** (the network was down, or a status the fetcher treats as failure survived the bounded retries) throws a `RequestException`. It carries the `RequestResponse`, so you can branch on `$e->response->status`. This is the only exception that reaches the caller.
+- **Scrape-level failure** (captcha, no results, wrong document) comes back as `success = false` + `error`, **not** an exception. It is produced by `return $this->fail('code')`, or by a `ScrapeException` thrown inside a Crawler or `handle()` (both are caught and folded into the response).
+
+So the calling code looks like this:
+
+```php
+use App\Scrapers\BikeScraper;
+use EduLazaro\Larascraper\Exceptions\RequestException;
+
+try {
+    $result = BikeScraper::run($url);          // always a ScraperResponse
+
+    if (! $result->success) {
+        // content failure: $result->error is 'captcha' / 'no_results' / ...
+        return;
+    }
+
+    $bike = $result->data;
+} catch (RequestException $e) {
+    // request layer only -> retry on 503, skip on 404, ...
+    report("HTTP {$e->response->status}: {$e->getMessage()}");
+}
+```
+
+Content failure is data (not an exception) because it is an *expected* outcome of scraping: pages block and layouts change, so you branch on `$result->success`. A genuine transport failure is the exceptional case, and that is the one `RequestException` you catch.
+
+## Passing parameters (run / with / make)
+
+Three static entry points reach the same instance, mirroring `edulazaro/laractions` so the two packages feel identical.
+
+**`run(...$params)`** sends its arguments to **`handle()`**. They can be positional, named, or an associative array mapped by name to `handle()`'s parameters:
+
+```php
+BikeScraper::run($url);                 // -> handle(string $url)
+BikeScraper::run(url: $url);            // named argument
+BikeScraper::run(['url' => $url]);      // assoc array mapped by name
+```
+
+A single array passed to a single array-typed parameter is forwarded whole as that argument (the "attribute bag"):
+
+```php
+class PriceApiScraper extends Scraper
+{
+    protected function handle(array $ids): array { /* ... */ }
+}
+
+PriceApiScraper::run([1, 2, 3]);        // $ids = [1, 2, 3]
+```
+
+**`with(...$params)`** injects into the scraper's **properties** by name (driver, tries, timeout, proxy, headers, ...), returns a chainable wrapper, then you call `run()`:
+
+```php
+BikeScraper::with(driver: 'http', tries: 5)->run($url);
+BikeScraper::with(['driver' => 'http', 'retryDelay' => 10])->run($url);
+```
+
+**`make(...$deps)`** builds the instance through Laravel's container. Note that `run()` already resolves the scraper through the container, so a scraper's bindable constructor dependencies are injected automatically. `BikeScraper::run($url)` is enough:
+
+```php
+BikeScraper::run($url);
+```
+
+If you must run a manually-constructed instance with explicit args, drive it directly rather than through the static `run()`:
+
+```php
+BikeScraper::make($dep)->handleToResponse([$url]);
+```
+
+## Configuration
+
+You tune a scraper in three interchangeable places: as **class properties** (best for a reusable scraper), on the **fetch chain** inside `handle()` (per request), or with **`with(...)`** for a one-off override.
+
+As class properties:
+
+```php
 use EduLazaro\Larascraper\Scraper;
 
 class BikeScraper extends Scraper
 {
-    protected function handle(string $name): array
-    {
-        return [
-            'title' => $this->crawler->filter($name)->text('')
-        ];
-    }
+    protected string $driver = 'browser';
+    protected int $timeout = 10000;                     // ms
+    protected int $tries = 5;                           // attempts
+    protected int $retryDelay = 10;                     // seconds between attempts
+    protected array $headers = ['Accept-Language' => 'en'];
+    protected ?string $proxy = '200.20.14.84:40200';
+    protected ?string $proxyUser = 'username';
+    protected ?string $proxyPass = 'password';
 }
 ```
 
-And then you can do:
+Or on the chain, per request:
 
 ```php
-use App\Scrapers\BikeScraper;
-
-BikeScraper::scrape('https://whatever.com/bikes/4')->run(name: 'title');
+protected function handle(string $url): ScraperResponse
+{
+    return $this->scrape($url)
+        ->proxy('200.20.14.84:40200', 'username', 'password')
+        ->timeout(10000)
+        ->headers(['Accept-Language' => 'en'])
+        ->retry(3, 5)
+        ->crawl(BikeCrawler::class)
+        ->run();
+}
 ```
 
-## Proxy Support
+### Proxy
 
-Larascraper supports proxies with or without authentication:
+With or without authentication:
 
 ```php
 ->proxy('200.20.14.84:40200')
+->proxy('200.20.14.84:40200', 'username', 'password')   // with auth
 ```
 
-Or if using authentication:
+The class-property equivalent is `$proxy`, `$proxyUser` and `$proxyPass`.
+
+### Timeout
+
+Milliseconds; 20000 by default:
 
 ```php
-->proxy('200.20.14.84:40200', 'username', 'password')
+->timeout(10000)
 ```
 
-## Timeout
-
-To add a custom timeout (20000 ms by default):
-
-```php
-->timeout(10000) // Timeout in milliseconds
-```
-
-## Headers
-
-To append custom headers:
+### Headers
 
 ```php
 ->headers([
     'Accept-Language' => 'en',
-    'X-Custom-Header' => 'Hello'
+    'X-Custom-Header' => 'Hello',
 ])
 ```
 
-## POST requests, body and cookies (HTTP driver)
+### Retries
 
-The `http` driver can also send POST (or any verb), a request body, and cookies — useful for JSON/form APIs and session-protected endpoints:
+The number of attempts and the delay (seconds) between them. The chain method is `retry()`; the class properties are `$tries` (default 3) and `$retryDelay` (default 15):
 
 ```php
-// POST a form body with a session cookie:
-ApiScraper::scrape('https://example.com/search.action')
-    ->driver('http')
-    ->method('POST')                                   // or ->post()
-    ->body(['q' => 'zelda', 'page' => 1], 'form')      // 'form' (default) or 'json'
-    ->cookies(['JSESSIONID' => $sessionId], 'example.com')
-    ->run();
+->retry(3, 5)   // 3 attempts, 5s apart
+```
 
-// JSON body shorthand:
-ApiScraper::scrape($url)->post()->asJson()->body($payload)->run();
+Only the transient statuses `408`, `429`, `500`, `502`, `503` and `504` are retried; any other error fails fast (and, if it survives the retries, throws a `RequestException`).
+
+## POST requests, body and cookies (HTTP driver)
+
+The `http` driver can also send POST (or any verb), a request body, and cookies, useful for JSON/form APIs and session-protected endpoints. These are chain methods on `$this->scrape($url)`:
+
+```php
+protected function handle(string $query): ScraperResponse
+{
+    return $this->scrape('https://example.com/search.action')
+        ->driver('http')
+        ->method('POST')                                   // or ->post()
+        ->body(['q' => $query, 'page' => 1])               // form by default
+        ->asForm()                                         // or ->asJson()
+        ->cookies(['JSESSIONID' => $this->sessionId], 'example.com')
+        ->run();
+}
+```
+
+For a JSON body, `post()` sets the verb, the body and the format in one call:
+
+```php
+->post(['ids' => [1, 2, 3]], 'json')     // POST + JSON body
 ```
 
 | Method | Description |
 |---|---|
-| `->method($verb)` / `->post()` | Set the HTTP verb (default `GET`). `post()` is a shorthand for `method('POST')`. |
-| `->body($data, $format = 'form')` | Request body. `'form'` sends URL-encoded form fields, `'json'` sends JSON. |
-| `->asForm()` / `->asJson()` | Set the body format without re-passing the body. |
-| `->cookies($pairs, $domain)` | Send cookies as `['name' => 'value']` for the given domain. |
+| `->method($verb)` | Set the HTTP verb (default `GET`). |
+| `->post($body = [], $format = 'form')` | Shorthand: set the verb to POST, plus the body and its format. |
+| `->body($data)` | Set the request body (an array for form or JSON). |
+| `->asForm()` / `->asJson()` | Choose the body format (`form` is the default). |
+| `->cookies($pairs, $domain = null)` | Send cookies as `['name' => 'value']` for the given domain (defaults to the URL host). |
 
-The response exposes any `Set-Cookie` values the server returned in `$result->cookies` (a `['name' => 'value']` array), so you can capture a session from one request and reuse it on the next:
+Any `Set-Cookie` values the server returned are on `$this->request->cookies` (a `['name' => 'value']` array), so you can capture a session from one request and reuse it on the next:
 
 ```php
-$login = ApiScraper::scrape($loginUrl)->driver('http')->post()->body($creds)->run();
-$session = $login->cookies['JSESSIONID'] ?? null;
+protected function handle(): array
+{
+    // Log in, then read the session cookie off the request layer.
+    $this->scrape($this->loginUrl)->driver('http')->post($this->credentials)->run();
+    $session = $this->request->cookies['JSESSIONID'] ?? null;
+
+    // Reuse it on the protected endpoint.
+    return $this->scrape($this->dataUrl)
+        ->driver('http')
+        ->cookies(['JSESSIONID' => $session], 'example.com')
+        ->crawl(DataCrawler::class)
+        ->run()
+        ->data;
+}
 ```
 
-> These are **request options**, not page actions, so they're available on the `http` driver. The `browser` driver throws if you set `method()`/`body()`/`cookies()` — it navigates as a real browser instead.
+> These are **request options**, not page actions, so they're available on the `http` driver. The `browser` driver throws if you set `method()`/`body()`/`cookies()`; it navigates as a real browser instead.
 
 ## Interacting with the page (actions)
 
 Sometimes the content you need only appears after interacting with the page: accepting a cookie banner, filling and submitting a form, paginating, expanding a "show more" section or scrolling to trigger lazy loading.
 
-You can chain **actions** before calling `run()`. They are sent to Puppeteer and executed **in order, in a single browser session**, right after navigation and before the final HTML is captured. The waits happen inside Node (where the page is alive), so timing works naturally:
+You can chain **actions** on the fetch chain before the terminal. They are sent to Puppeteer and executed **in order, in a single browser session**, right after navigation and before the final HTML is captured. The waits happen inside Node (where the page is alive), so timing works naturally:
 
 ```php
-$result = MyScraper::scrape('https://shop.com/search')
-    ->click('#accept-cookies')
-    ->type('#search', 'zelda')
-    ->press('Enter', waitForNavigation: true) // submit + wait for the new page
-    ->waitForSelector('.results')
-    ->scrollToBottom()                         // trigger lazy loading
-    ->wait(800)
-    ->run();                                   // handle() parses the final HTML
-
-$items = $result->data;                        // your handle() result
+protected function handle(string $url): ScraperResponse
+{
+    return $this->scrape($url)
+        ->click('#accept-cookies')
+        ->type('#search', 'zelda')
+        ->press('Enter', waitForNavigation: true)  // submit + wait for the new page
+        ->waitForSelector('.results')
+        ->scrollToBottom()                          // trigger lazy loading
+        ->wait(800)
+        ->crawl(ResultsCrawler::class)              // parse the final HTML
+        ->run();
+}
 ```
 
 ### Available actions
@@ -250,18 +530,18 @@ $items = $result->data;                        // your handle() result
 | `->select($selector, $value)` | Choose an option (by value) in a `<select>`. |
 | `->setValue($selector, $value)` | Set an element's value directly, firing `input` + `change` events. For hidden inputs populated by a custom widget (multiselects backed by an `<input type="hidden">`), or fields `type()`/`select()` can't reach. |
 | `->hover($selector)` | Hover over an element. |
-| `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`…). Pass `waitForNavigation: true` when it submits a form. |
+| `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`...). Pass `waitForNavigation: true` when it submits a form. |
 | `->waitForSelector($selector)` | Wait until an element appears (lazy/JS content). |
 | `->waitForNavigation()` | Wait for a navigation to finish. |
 | `->wait($ms)` | Wait a fixed number of milliseconds. |
 | `->scroll('bottom'\|'top')` / `->scrollToBottom()` | Scroll the page (infinite scroll / lazy load). |
 | `->visit($url, $waitUntil = 'networkidle2')` | Navigate to a URL mid-flow (resolved against the current page). Handy at the start of a `repeatUntil()` body to return to a viewer page so each attempt starts from fresh server state. |
-| `->gotoAttr($selector, $attr = 'href', $waitUntil = 'networkidle2')` | Navigate to the URL held in an element's attribute — e.g. an `<object data="...">` / `<embed src="...">` PDF viewer where the next URL lives in an attribute, not a link. |
+| `->gotoAttr($selector, $attr = 'href', $waitUntil = 'networkidle2')` | Navigate to the URL held in an element's attribute, e.g. an `<object data="...">` / `<embed src="...">` PDF viewer where the next URL lives in an attribute, not a link. |
 | `->reload($waitUntil = 'networkidle2')` | Reload the current page (e.g. to regenerate a captcha image before solving it). |
 
-> **`waitUntil` on navigation actions.** `visit()`, `gotoAttr()` and `reload()` accept a Puppeteer wait condition. The default `'networkidle2'` is right for most pages, but some servers keep connections open and **never reach network idle** — there `'networkidle2'` would burn the whole timeout. For those, pass `'domcontentloaded'` and rely on a following `waitForSelector()` as the real "content is ready" signal: `->visit($url, 'domcontentloaded')->waitForSelector('.results')`.
+> **`waitUntil` on navigation actions.** `visit()`, `gotoAttr()` and `reload()` accept a Puppeteer wait condition. The default `'networkidle2'` is right for most pages, but some servers keep connections open and **never reach network idle**; there `'networkidle2'` would burn the whole timeout. For those, pass `'domcontentloaded'` and rely on a following `waitForSelector()` as the real "content is ready" signal: `->visit($url, 'domcontentloaded')->waitForSelector('.results')`.
 
-If an action fails (for example a selector that never appears within the timeout), the scrape fails cleanly with `success = false` and the error message, just like an HTTP error.
+If an action fails (for example a selector that never appears within the timeout), the fetch fails, which raises a `RequestException` after the retries, just like an HTTP error.
 
 > **Tip:** for a click or key press that loads a new page, use `waitForNavigation: true` on that action (or `clickAndWait()`) rather than a separate `->waitForNavigation()` call. That arms the wait *before* the click, avoiding a race where the navigation finishes before the wait starts.
 
@@ -285,12 +565,16 @@ The action chain is a little **query builder for the page**: besides the linear 
 ```php
 use EduLazaro\Larascraper\Support\Condition;
 
-MyScraper::scrape($url)
-    ->when(
-        Condition::selectorExists('#cookie-banner'),
-        fn ($b) => $b->click('#accept-cookies'),  // only if the banner is there
-    )
-    ->run();
+protected function handle(string $url): ScraperResponse
+{
+    return $this->scrape($url)
+        ->when(
+            Condition::selectorExists('#cookie-banner'),
+            fn ($b) => $b->click('#accept-cookies'),  // only if the banner is there
+        )
+        ->crawl(ProductCrawler::class)
+        ->run();
+}
 ```
 
 The `else` branch is optional (and rarely needed; usually you just continue the main chain afterwards):
@@ -320,27 +604,32 @@ The `else` branch is optional (and rarely needed; usually you just continue the 
 
 Build conditions with the `Condition` helper (each returns the data the Node runner evaluates):
 
-| Condition | True when… |
+| Condition | True when... |
 |---|---|
 | `Condition::selectorExists($selector)` | an element matching the selector exists |
 | `Condition::selectorMissing($selector)` | no element matching the selector exists |
 | `Condition::textContains($text, $selector = null)` | the text is found (in `$selector`, or the whole page) |
 | `Condition::urlContains($text)` | the current URL contains the substring |
+| `Condition::captured()` | a file/binary has been captured (pair with `capture()` in a loop) |
 
 ## Solving simple captchas
 
-For simple **image (text) captchas**, `solveCaptcha()` screenshots the captcha image, reads it with OCR, and types the answer into an input. The OCR packages (`tesseract.js`, `jimp`) are **optional**; install them with `php artisan larascraper:install --captcha`. If they are missing, the scrape fails with a clear message pointing you to that command.
+For simple **image (text) captchas**, `solveCaptcha()` screenshots the captcha image, reads it with OCR, and types the answer into an input. The OCR packages (`tesseract.js`, `jimp`) are **optional**; install them with `php artisan larascraper:install --captcha`. If they are missing, the fetch fails with a clear message pointing you to that command.
 
 ```php
-MyScraper::scrape($url)
-    ->solveCaptcha('#captcha-img', '#captcha-input', [
-        'whitelist' => 'abcdefghijklmnopqrstuvwxyz0123456789', // allowed characters
-        'psm'       => 8,                                      // tesseract page-seg mode
-        'threshold' => 150,                                    // binarization threshold
-        // 'crop', 'scale', 'contrast', 'lang' are also accepted
-    ])
-    ->clickAndWait('#submit')
-    ->run();
+protected function handle(string $url): ScraperResponse
+{
+    return $this->scrape($url)
+        ->solveCaptcha('#captcha-img', '#captcha-input', [
+            'whitelist' => 'abcdefghijklmnopqrstuvwxyz0123456789', // allowed characters
+            'psm'       => 8,                                      // tesseract page-seg mode
+            'threshold' => 150,                                    // binarization threshold
+            // 'crop', 'scale', 'contrast', 'lang' are also accepted
+        ])
+        ->clickAndWait('#submit')
+        ->crawl(ResultCrawler::class)
+        ->run();
+}
 ```
 
 Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captcha is accepted (see above). The `solver` option is reserved for future solvers (e.g. `'vision'`); only `'ocr'` is supported today.
@@ -349,7 +638,7 @@ Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captc
 
 ## Downloading files
 
-When the response is a **file** (a PDF, a ZIP), you extend `Scraper` as usual and work with it inside `handle()` — the captured raw bytes arrive in `$this->file`, exactly like `$this->crawler` holds the HTML. Grab the file in the chain with `capture()`.
+When the response is a **file** (a PDF, a ZIP), you grab it in the chain with `capture()` and end with the **`->file()`** terminal, which runs the fetch and returns a `CapturedFile`:
 
 ### From a click or link
 
@@ -358,35 +647,35 @@ use EduLazaro\Larascraper\Scraper;
 
 class ReportScraper extends Scraper
 {
-    protected function handle(): array
+    protected function handle(string $pageUrl): array
     {
-        $this->file->save(storage_path('app/report.pdf'));   // $this->file is a CapturedFile
+        $file = $this->scrape($pageUrl)
+            ->click('a.download-pdf')
+            ->capture('application/pdf')   // grab the response the click triggers
+            ->file();                      // run the chain, return the CapturedFile
 
-        return ['bytes' => $this->file->size()];
+        $file->save(storage_path('app/report.pdf'));
+
+        return ['bytes' => $file->size()];
     }
 }
-
-ReportScraper::scrape($pageUrl)
-    ->click('a.download-pdf')
-    ->capture('application/pdf')   // grab the response the click triggers
-    ->run();
 ```
 
-`capture($expect)` records the file-like responses the page produces and keeps the one matching `expect` (a content-type substring like `application/pdf`; PDFs also match by their `%PDF` magic bytes). With no argument it takes the first file-like response. Pair it with `repeatUntil(Condition::captured(), ...)` to retry. It captures files that **render inline** (the browser's PDF viewer); a forced download (`Content-Disposition: attachment`) is not captured.
+`capture($expect)` records the file-like responses the page produces and keeps the one matching `expect` (a content-type substring like `application/pdf`; PDFs also match by their `%PDF` magic bytes). With no argument it takes the first file-like response. The `->file()` terminal returns the captured `CapturedFile`, or raises a `no_file` scrape failure (a `ScrapeException` folded into `success = false`) when nothing was captured. Pair `capture()` with `repeatUntil(Condition::captured(), ...)` to retry. It captures files that **render inline** (the browser's PDF viewer); a forced download (`Content-Disposition: attachment`) is not captured.
 
 ### From a form
 
 When the file only comes back from **submitting a form** (hidden fields, tokens, a session), submit it and capture the response:
 
 ```php
-->submit('form')->capture('application/pdf')
+->submit('form')->capture('application/pdf')->file()
 ```
 
-> `submitAndCapture('form', ['expect' => ...])` did submit + capture in one call, but is **deprecated** (removed in 3.0). Use `submit()` + `capture()`.
+> `submit()` + `capture()` is the composable pattern. The old one-call `submitAndCapture()` is **deprecated**; prefer `submit()` + `capture()`.
 
 ### From a direct URL
 
-If the file lives at a plain URL, you do not need the browser: the `http` driver downloads it directly. A **binary** response (a PDF, a ZIP, an image...) is exposed as `$result->file` (a `CapturedFile`), exactly like `capture()` on the browser driver; text responses (HTML, JSON, XML) still arrive in `$result->html`.
+If the file lives at a plain URL, you do not need the browser: the `http` driver downloads it directly. A **binary** response (a PDF, a ZIP, an image...) is exposed through the same `->file()` terminal (and on `$this->request->file`); text responses (HTML, JSON, XML) still arrive as the response html.
 
 ```php
 use EduLazaro\Larascraper\Scraper;
@@ -395,13 +684,13 @@ class LawScraper extends Scraper
 {
     protected string $driver = 'http';
 
-    protected function handle(): string
+    protected function handle(string $url): string
     {
-        return $this->file?->text() ?: '';   // $this->file is the downloaded PDF
+        return $this->scrape($url)->file()->text() ?: '';
     }
 }
 
-$text = LawScraper::scrape('https://example.com/law.pdf')->run()->data;
+$text = LawScraper::run('https://example.com/law.pdf')->data;
 ```
 
 ### Behind a captcha
@@ -411,7 +700,7 @@ Wrap the capture in `repeatUntil(Condition::captured(), ...)` and solve the capt
 ```php
 use EduLazaro\Larascraper\Support\Condition;
 
-ReportScraper::scrape($viewerUrl)
+$file = $this->scrape($viewerUrl)
     ->repeatUntil(
         Condition::captured(),
         fn ($b) => $b
@@ -426,41 +715,51 @@ ReportScraper::scrape($viewerUrl)
         max: 8,
         delay: 400,
     )
-    ->run();
+    ->file();
 ```
 
 `Condition::captured()` is true as soon as a file is grabbed, so the loop stops on success and gives up after `max` attempts.
 
 ## Reading a captured PDF (text / vision)
 
-Once you have captured a PDF, read its text right inside `handle()`, the same place you use `$this->crawler` for HTML. The captured file is `$this->file`, with `->text()` (the PDF's text layer, free) and `->vision()` (OCR, for scanned pages):
+Once you have a `CapturedFile` from the `->file()` terminal, read its text with `->text()` (the PDF's text layer, free) and `->vision()` (OCR, for scanned pages):
 
 ```php
 use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 
 class LawScraper extends Scraper
 {
-    protected function handle(): string
+    protected function handle(string $url): ScraperResponse
     {
-        $text = $this->file->text();           // text layer (gs)
+        $file = $this->scrape($url)->click('a.pdf')->capture()->file();
+
+        $text = $file->text();                 // text layer (gs)
 
         if ($text === '') {                    // scanned PDF? fall back to OCR
-            $text = $this->file->vision('ai');
+            $text = $file->vision('ai');
         }
 
-        return $text;
+        return $text === ''
+            ? $this->fail('no_text')
+            : $this->ok(['text' => $text]);
     }
 }
 
-$text = LawScraper::scrape($url)->click('a.pdf')->capture()->run()->data;
+$result = LawScraper::run($url);
+$text = $result->success ? $result->data['text'] : null;
 ```
 
-- **`$this->file->text($engine = 'gs')`** reads the PDF's existing text layer. No OCR, fast, free. Engines: `gs` (ghostscript), `poppler` (pdftotext), `smalot` (smalot/pdfparser). Returns `''` for a scanned PDF (no text layer), so you can fall back to vision.
-- **`$this->file->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
+The `CapturedFile` API:
+
+- **`$file->text($engine = 'gs')`** reads the PDF's existing text layer. No OCR, fast, free. Engines: `gs` (ghostscript), `poppler` (pdftotext), `smalot` (smalot/pdfparser). Returns `''` for a scanned PDF (no text layer), so you can fall back to vision.
+- **`$file->vision($engine = 'ai')`** rasterizes each page to an image and reads it, for scanned PDFs. Engines: `ai` (a vision model) and `tesseract`.
+- **`$file->bytes()`** / **`$file->save($path)`** for the raw bytes.
+- **`$file->contentType()`** / **`$file->size()`** for metadata.
 
 Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotext`/`pdftoppm`, `tesseract`) or, for `vision('ai')`, calls an OpenAI-compatible endpoint; a missing tool fails with a clear message. Configure the `ai` engine with `config/larascraper.php` (`openai_key`, `vision_model`, `vision_lang`, `vision_dpi`) or the `OPENAI_API_KEY` env var.
 
-> **System requirements (PDF engines).** These are OS packages, not PHP/Composer dependencies, so Composer can't install them for you — add them to your image (e.g. your Dockerfile) if you use these engines. They're also listed under `suggest` in this package's `composer.json`.
+> **System requirements (PDF engines).** These are OS packages, not PHP/Composer dependencies, so Composer can't install them for you; add them to your image (e.g. your Dockerfile) if you use these engines. They're also listed under `suggest` in this package's `composer.json`.
 >
 > | Feature | Binary | Install (Debian/Ubuntu) |
 > |---|---|---|
@@ -469,16 +768,6 @@ Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotex
 > | `vision('tesseract')` | `tesseract` | `apt-get install tesseract-ocr` |
 >
 > Note `vision('ai')` still needs **poppler-utils**: it rasterizes each page with `pdftoppm` before sending it to the cloud vision model.
-
-## Retry logic
-
-You can add the number of attempts and the number of seconds to wait between attempts:
-
-```php
-->retry(3, 5)
-```
-
-Retry 3 times and wait 5 seconds betwee attempts. Please note only the error codes 408, 429, 500, 502, 503 and 504 will be retried.
 
 ## Artisan Commands
 
@@ -495,13 +784,13 @@ Options:
 - `--no-browser` skips downloading Chrome (use it when a system Chrome is provided via `PUPPETEER_EXECUTABLE_PATH`).
 - `--captcha` also installs the optional OCR packages (`tesseract.js`, `jimp`) used by `solveCaptcha()`. Left out by default so projects that don't solve captchas stay lean.
 
-You can generate a scraper instance with:
+You can generate a scraper class with:
 
 ```bash
 php artisan make:scraper MyScraper
 ```
 
-List all scrapers in app/Scrapers directory:
+List all scrapers in the `app/Scrapers` directory:
 
 ```bash
 php artisan list:scrapers
@@ -519,7 +808,7 @@ Given a name and a target URL, the skill:
 
 - Checks that Larascraper (and the Node/Puppeteer side) is installed.
 - Reads the installed `Scraper` API so it only uses methods your version actually has.
-- Generates the class with `make:scraper` and fills `handle()` from the **real** page markup (not guesses).
+- Generates the class with `make:scraper` and fills `handle()` (plus a Crawler) from the **real** page markup (not guesses).
 - Wires up the right [actions](#interacting-with-the-page-actions) when the page needs interaction (cookie walls, search forms, pagination, infinite scroll).
 - Runs the scraper once to confirm the fields come back populated.
 
@@ -533,11 +822,17 @@ You can easily test a scraper with Tinker:
 php artisan tinker
 ```
 
-And the running:
+And then running:
 
 ```php
-$result = \App\Scrapers\TestScraper::scrape('https://whatever.com')->run();
+$result = \App\Scrapers\BikeScraper::run('https://whatever.com');
 dd($result->success, $result->data);
+```
+
+Because a `Crawler` only knows about HTML, you can also unit-test the parsing on its own against a fixture, without touching the network:
+
+```php
+$data = (new \App\Scrapers\Crawlers\BikeCrawler($fixtureHtml))->parse();
 ```
 
 ## Issues
@@ -566,9 +861,140 @@ Save the file and run:
 source ~/.bash_profile
 ```
 
-Now Node will be available for non interative terminals and the scraping process should run successfully.
+Now Node will be available for non interactive terminals and the scraping process should run successfully.
 
-In general, it's not recommended the usage of NVM on production environments.
+In general, it's not recommended to use NVM on production environments.
+
+## Examples
+
+A few complete, copy-pasteable v3 scrapers that put the pieces together.
+
+**1. A basic HTML scraper with a Crawler** - fetch a page, parse fields, signal a content failure:
+
+```php
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
+class BikeScraper extends Scraper
+{
+    protected function handle(string $url): ScraperResponse
+    {
+        return $this->scrape($url)->crawl(BikeCrawler::class)->run();
+    }
+}
+```
+
+```php
+use EduLazaro\Larascraper\Crawler;
+use EduLazaro\Larascraper\Exceptions\ScrapeException;
+
+class BikeCrawler extends Crawler
+{
+    protected function handle(): array
+    {
+        if ($this->filter('h1')->count() === 0) {
+            throw new ScrapeException('no_product');   // -> success = false, error = 'no_product'
+        }
+
+        return [
+            'name'  => $this->filter('h1')->text(''),
+            'price' => $this->filter('.price')->text(''),
+            'specs' => $this->filter('ul.specs li')->each(fn ($li) => trim($li->text(''))),
+        ];
+    }
+}
+```
+
+```php
+$result = BikeScraper::run('https://shop.com/bikes/4');
+
+if ($result->success) {
+    $bike = $result->data;   // ['name' => ..., 'price' => ..., 'specs' => [...]]
+} else {
+    report("scrape failed: {$result->error}");
+}
+```
+
+**2. A search form with actions** - type, submit, wait, lazy-load, then extract inline:
+
+```php
+use EduLazaro\Larascraper\Scraper;
+
+class SearchScraper extends Scraper
+{
+    protected function handle(string $query): array
+    {
+        return $this->scrape('https://shop.com/search')
+            ->type('#q', $query)
+            ->press('Enter', waitForNavigation: true)
+            ->waitForSelector('.result')
+            ->scrollToBottom()
+            ->crawl('.result h3')   // inline CSS selector
+            ->texts();              // string[] -> run() wraps it as data
+    }
+}
+
+$titles = SearchScraper::run('zelda')->data;   // ['Zelda 1', 'Zelda 2', ...]
+```
+
+**3. A JSON API via the `http` driver** - no browser, POST a JSON body:
+
+```php
+use EduLazaro\Larascraper\Scraper;
+
+class PriceApiScraper extends Scraper
+{
+    protected string $driver = 'http';
+
+    protected function handle(array $ids): array
+    {
+        $response = $this->scrape('https://api.shop.com/prices')
+            ->post(['ids' => $ids], 'json')
+            ->run();                       // ScraperResponse(data: raw JSON body)
+
+        return json_decode($response->data, true) ?? [];
+    }
+}
+
+$prices = PriceApiScraper::run(ids: [1, 2, 3])->data;
+```
+
+**4. A PDF behind a button, read with text + OCR fallback and a fail branch**:
+
+```php
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
+class LawScraper extends Scraper
+{
+    protected function handle(string $pageUrl): ScraperResponse
+    {
+        $file = $this->scrape($pageUrl)
+            ->click('a.download-pdf')
+            ->capture('application/pdf')
+            ->file();                       // CapturedFile, or a 'no_file' scrape failure
+
+        $text = $file->text();              // the PDF's text layer (fast, free)
+
+        if ($text === '') {                 // scanned PDF? fall back to OCR
+            $text = $file->vision('ai');
+        }
+
+        return trim($text) === ''
+            ? $this->fail('no_text')        // success = false, error = 'no_text'
+            : $this->ok(['text' => $text]);
+    }
+}
+
+$result = LawScraper::run('https://boe.example/doc/123');
+
+if (! $result->success) {
+    // $result->error is 'no_text' (empty PDF) or 'no_file' (nothing captured)
+    return;
+}
+
+$text = $result->data['text'];
+```
 
 ## Sponsors
 
@@ -586,4 +1012,3 @@ Created by [Edu Lazaro](https://edulazaro.com)
 ## License
 
 Larascraper is open-sourced software licensed under the [MIT license](LICENSE.md).
-

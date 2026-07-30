@@ -38,7 +38,46 @@ class CapturedFileTest extends BaseTestCase
     public function test_unknown_text_engine_throws(): void
     {
         $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Unknown text engine');
 
         (new CapturedFile('%PDF-1.4 fake'))->text('nope');
+    }
+
+    public function test_strip_code_fences_removes_fence_only_lines(): void
+    {
+        $file = new ExposedCapturedFile('');
+
+        $this->assertSame('keep me', $file->call('stripCodeFences', "```json\nkeep me\n```"));
+    }
+
+    public function test_fix_mojibake_repairs_double_encoded_utf8(): void
+    {
+        $file = new ExposedCapturedFile('');
+
+        $good = 'número de expedición';
+        $mojibake = mb_convert_encoding($good, 'UTF-8', 'ISO-8859-1');   // double-encode
+
+        $this->assertNotSame($good, $mojibake);                          // genuinely broken
+        $this->assertSame($good, $file->call('fixMojibake', $mojibake)); // repaired
+        $this->assertSame($good, $file->call('fixMojibake', $good));     // idempotent on clean text
+    }
+
+    public function test_normalize_text_collapses_whitespace_and_blank_lines(): void
+    {
+        $file = new ExposedCapturedFile('');
+
+        $this->assertSame("a b\n\nc", $file->call('normalizeText', "  a   b\n\n\n\nc  "));
+    }
+}
+
+/**
+ * Test-only subclass exposing CapturedFile's protected, dependency-free text
+ * post-processors so they can be unit-tested without any PDF engine.
+ */
+class ExposedCapturedFile extends CapturedFile
+{
+    public function call(string $method, mixed ...$args): mixed
+    {
+        return $this->{$method}(...$args);
     }
 }

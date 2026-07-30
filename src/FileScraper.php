@@ -2,29 +2,34 @@
 
 namespace EduLazaro\Larascraper;
 
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
 /**
- * A ready-to-use scraper for downloading a file/binary (e.g. a PDF) instead of
- * parsing HTML. Use it directly, no subclass needed:
+ * Deprecated convenience subclass kept for source compatibility with the 2.x
+ * line. In v3 there is no dedicated file scraper: capturing a binary is done
+ * inline from any scraper via the fetch chain, for example a PDF datasheet:
  *
- *     $result = FileScraper::scrape($url)
- *         ->submitAndCapture('form', ['expect' => 'application/pdf'])
- *         ->run();
+ *     $file = $this->scrape($url)->capture()->file();
+ *     file_put_contents('doc.pdf', $file->bytes());
  *
- *     file_put_contents('doc.pdf', $result->file);
+ * This class simply fetches the URL and hands back a {@see ScraperResponse}. The
+ * captured binary, when the underlying request produced one, is reachable at
+ * $response->request->file (a {@see \EduLazaro\Larascraper\Support\CapturedFile}).
  *
- * The captured bytes land in $result->file and the type in $result->contentType.
- * There is nothing to parse, so handle() is defined here (returning null) and you
- * never have to write it.
+ * @deprecated 3.0 use $this->scrape($url)->capture()->file()
  */
 class FileScraper extends Scraper
 {
     /**
-     * No HTML parsing: the result is the captured file, in $result->file.
+     * Fetch the URL and expose the binary via $response->request->file.
      *
-     * @return null
+     * @param  string  $url  The URL to fetch.
+     * @return \EduLazaro\Larascraper\Support\ScraperResponse
+     *
+     * @deprecated 3.0 use $this->scrape($url)->capture()->file()
      */
-    protected function handle(): mixed
+    protected function handle(string $url): ScraperResponse
     {
-        return null;
+        return $this->scrape($url)->run();
     }
 }

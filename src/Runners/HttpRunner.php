@@ -81,15 +81,26 @@ class HttpRunner implements Runner
     }
 
     /**
-     * Set browser actions. Not supported in HTTP mode.
+     * Set browser actions. Genuine browser interactions are not supported here.
+     *
+     * The declarative `capture` action is the one exception: it does not drive
+     * the page, it only signals "expect a binary body". The http runner already
+     * detects that on its own (see looksBinary()), so a lone capture() is a
+     * harmless no-op and is filtered out. Any real browser action (click, type,
+     * wait, ...) still throws, because a plain HTTP request cannot perform it.
      *
      * @param array $actions List of action descriptors.
-     * @throws LogicException If any action is provided.
+     * @throws LogicException If a genuine browser action is provided.
      * @return static
      */
     public function withActions(array $actions): static
     {
-        if (!empty($actions)) {
+        $browserActions = array_filter(
+            $actions,
+            fn ($action) => ($action['type'] ?? null) !== 'capture'
+        );
+
+        if (!empty($browserActions)) {
             throw new LogicException(
                 'The "http" driver does not support browser actions (click, type, wait, etc.). '
                 . 'Use the "browser" driver for pages that require interaction or JavaScript rendering.'

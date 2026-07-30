@@ -3,6 +3,7 @@
 namespace {{ namespace }};
 
 use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
 
 /**
  * Scrapes a page and returns the parsed data.
@@ -10,14 +11,22 @@ use EduLazaro\Larascraper\Scraper;
 class {{ class }} extends Scraper
 {
     /**
-     * Parse the fetched page and return the scraped data.
+     * Fetch the page and return the scraped result.
      *
-     * @return array
+     * The default below just returns the fetched HTML wrapped in a
+     * ScraperResponse. To parse structured data, chain a crawler:
+     *
+     *     // Parse with a dedicated Crawler class:
+     *     return $this->scrape($url)->crawl(YourCrawler::class)->run();
+     *
+     *     // Or extract inline by CSS selector:
+     *     $titles = $this->scrape($url)->crawl('.selector')->texts();
+     *
+     * @param  string  $url  The URL to fetch.
+     * @return \EduLazaro\Larascraper\Support\ScraperResponse
      */
-    protected function handle(): array
+    protected function handle(string $url): ScraperResponse
     {
-        return [
-            'title' => $this->crawler->filter('title')->text() ?? null,
-        ];
+        return $this->scrape($url)->run();
     }
 }
