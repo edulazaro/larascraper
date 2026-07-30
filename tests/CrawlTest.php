@@ -61,6 +61,14 @@ class CrawlTest extends BaseTestCase
         $this->assertSame(['title' => 'Bike shop'], $response->data);
     }
 
+    public function test_a_crawler_can_be_created_and_parsed_standalone(): void
+    {
+        // No fetch: the Crawler parses HTML you already have, via the create() factory.
+        $data = TitleCrawler::create(self::HTML)->parse();
+
+        $this->assertSame(['title' => 'Bike shop'], $data);
+    }
+
     public function test_selector_mode_text_returns_the_first_match(): void
     {
         $this->fakeHtml();

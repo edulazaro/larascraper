@@ -239,7 +239,7 @@ The `crawl(BikeCrawler::class)->run()` terminal **catches** that `ScrapeExceptio
 You can drive the same Crawler against raw HTML directly, which is handy in tests:
 
 ```php
-$data = (new BikeCrawler($html))->parse();
+$data = BikeCrawler::create($html)->parse();   // or: (new BikeCrawler($html))->parse()
 ```
 
 ## The ScraperResponse
@@ -832,7 +832,7 @@ dd($result->success, $result->data);
 Because a `Crawler` only knows about HTML, you can also unit-test the parsing on its own against a fixture, without touching the network:
 
 ```php
-$data = (new \App\Scrapers\Crawlers\BikeCrawler($fixtureHtml))->parse();
+$data = \App\Scrapers\Crawlers\BikeCrawler::create($fixtureHtml)->parse();
 ```
 
 ## Issues

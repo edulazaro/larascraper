@@ -50,6 +50,15 @@ abstract class Crawler
     }
 
     /**
+     * Fluent alternative to `new BikeCrawler($html)`, so a standalone parse reads
+     * as `BikeCrawler::create($html)->parse()`.
+     */
+    public static function create(string $html): static
+    {
+        return new static($html);
+    }
+
+    /**
      * Public entry point. Delegates to the subclass handle() so callers never
      * touch the protected extraction logic directly.
      */
