@@ -3,10 +3,14 @@
 namespace EduLazaro\Larascraper\Support;
 
 use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Spider;
 use EduLazaro\Larascraper\Concerns\BuildsActions;
 use EduLazaro\Larascraper\Contracts\Runner;
 use EduLazaro\Larascraper\Exceptions\RequestException;
 use EduLazaro\Larascraper\Exceptions\ScrapeException;
+use EduLazaro\Larascraper\Runners\HttpRunner;
+use Fiber;
+use Illuminate\Http\Client\Response;
 use InvalidArgumentException;
 use Throwable;
 
@@ -266,11 +270,17 @@ class FetchBuilder
      * Perform the fetch and return the HTTP-layer response.
      *
      * Idempotent: memoized on first call so Crawl and the other terminals can
-     * share one request. The runner is built ONCE before the retry loop so a
-     * configuration error (e.g. actions on the http driver) throws immediately
-     * instead of being swallowed and retried. On a request-level failure that
-     * survives the retries, a RequestException carrying the RequestResponse is
-     * thrown; otherwise the RequestResponse is returned.
+     * share one request. Dispatches to one of two paths that end identically
+     * (both funnel through wrapResponse(), so $this->request, the memo, the
+     * RequestException-on-failure and the Set-Cookie store-back behave the same):
+     *
+     *   - The BLOCKING path (fetchBlocking()) runs the driver's runner inline
+     *     with the bounded retry loop. This is the default and is unchanged.
+     *   - The CONCURRENT path (fetchAsync()) engages only inside a Spider pool
+     *     wave (a scheduler is active) while running in a Fiber on an http-style
+     *     driver: it hands a fully-resolved request spec to the scheduler via
+     *     Fiber::suspend() and resumes with the settled response, so many
+     *     scrapers overlap their network I/O in one Http::pool() wave.
      *
      * @return RequestResponse
      * @throws RequestException When the request fails after the bounded retries.
@@ -281,6 +291,42 @@ class FetchBuilder
             return $this->fetched;
         }
 
+        if ($this->shouldRunAsync()) {
+            return $this->fetchAsync();
+        }
+
+        return $this->fetchBlocking();
+    }
+
+    /**
+     * Whether this fetch should suspend into a Spider pool scheduler instead of
+     * blocking: a scheduler is active, we are running inside a Fiber, and the
+     * driver's runner is HTTP-poolable (an HttpRunner or a subclass). Any other
+     * driver, or a fetch outside a pool, takes the blocking path unchanged.
+     *
+     * @return bool
+     */
+    protected function shouldRunAsync(): bool
+    {
+        $runnerClass = $this->drivers[$this->driver] ?? null;
+
+        return $runnerClass !== null
+            && is_a($runnerClass, HttpRunner::class, true)
+            && Spider::schedulerActive()
+            && Fiber::getCurrent() !== null;
+    }
+
+    /**
+     * The blocking fetch: build the runner once (so a config error such as
+     * actions on the http driver fails fast), run the bounded retry loop, then
+     * wrap the normalized runner array. Behaviour is identical to the original
+     * fetch(): this is the path every non-pooled Scraper::run() takes.
+     *
+     * @return RequestResponse
+     * @throws RequestException When the request fails after the bounded retries.
+     */
+    protected function fetchBlocking(): RequestResponse
+    {
         $host = parse_url($this->url, PHP_URL_HOST) ?: '';
 
         /** @var class-string<Runner> $runnerClass */
@@ -352,6 +398,88 @@ class FetchBuilder
             }
         }
 
+        return $this->wrapResponse($response, $host, $sessionActive);
+    }
+
+    /**
+     * The concurrent fetch: resolve the FULL request config (url, method,
+     * headers, timeout, session-merged cookies, proxy, basic auth, body, retry
+     * config), hand it to the active Spider pool scheduler with Fiber::suspend(),
+     * and resume with the settled transport result. The result is normalized by
+     * the SAME runner logic the blocking path uses (HttpRunner::normalizeResponse
+     * / transportFailure) so the two paths cannot drift, then wrapped identically.
+     *
+     * The spec carries session cookies + proxy + basic auth + headers + body (not
+     * just headers/timeout), so a pooled request cannot silently diverge from
+     * HttpRunner::run().
+     *
+     * @return RequestResponse
+     * @throws RequestException When the settled response is a request-level failure.
+     */
+    protected function fetchAsync(): RequestResponse
+    {
+        $host = parse_url($this->url, PHP_URL_HOST) ?: '';
+
+        // The async path only engages on an http-style driver, which carries
+        // outbound cookies, so a shared jar always rides along here. Merge the
+        // jar's cookies UNDER any explicit per-call cookies (which win), exactly
+        // like the blocking path.
+        $sessionActive = $this->session !== null;
+
+        $cookies = $this->cookies;
+
+        if ($sessionActive) {
+            $cookies = array_merge($this->session->cookiesFor($host), $cookies);
+        }
+
+        $spec = [
+            'url' => $this->url,
+            'method' => strtoupper($this->httpMethod),
+            'headers' => $this->headers,
+            'timeout' => $this->timeout,
+            'cookies' => $cookies,
+            'cookieDomain' => $this->cookieDomain ?: $host,
+            'proxy' => $this->proxy,
+            'proxyUser' => $this->proxyUser,
+            'proxyPass' => $this->proxyPass,
+            'body' => $this->body,
+            'bodyFormat' => $this->bodyFormat,
+            'maxRetries' => $this->maxRetries,
+            'retryDelay' => $this->retryDelay,
+        ];
+
+        // Park this fiber; the scheduler resumes it with the settled Http::pool
+        // result: a Response, or a Throwable on a connection-level failure.
+        $result = Fiber::suspend($spec);
+
+        /** @var class-string<HttpRunner> $runnerClass */
+        $runnerClass = $this->drivers[$this->driver];
+
+        if ($result instanceof Response) {
+            $response = $runnerClass::normalizeResponse($result);
+        } else {
+            $message = $result instanceof Throwable ? $result->getMessage() : 'request_failed';
+            $response = $runnerClass::transportFailure($message);
+        }
+
+        return $this->wrapResponse($response, $host, $sessionActive);
+    }
+
+    /**
+     * Turn a normalized runner array into a RequestResponse and finish the fetch.
+     *
+     * Shared by both fetch paths so the memoization, the $scraper->request write,
+     * the RequestException-on-failure and the Set-Cookie store-back are done in
+     * exactly one place.
+     *
+     * @param array $response The normalized runner result array.
+     * @param string $host The request URL's host (for the session store-back).
+     * @param bool $sessionActive Whether a cookie-carrying shared jar is threaded.
+     * @return RequestResponse
+     * @throws RequestException When the response is a request-level failure.
+     */
+    protected function wrapResponse(array $response, string $host, bool $sessionActive): RequestResponse
+    {
         // A captured file/binary arrives base64-encoded from the runner.
         $file = isset($response['file'])
             ? new CapturedFile(base64_decode($response['file']), $response['contentType'] ?? null)

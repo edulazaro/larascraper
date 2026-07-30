@@ -52,6 +52,21 @@ class PendingScraper
     }
 
     /**
+     * A FRESH clone of the configured instance, carrying the same configuration
+     * (driver, headers, proxy, tries, ...) but its own mutable request state.
+     *
+     * A Spider pool() uses this to give every item its own configured scraper,
+     * so a template built with Scraper::with(...) is never shared (and its
+     * $this->request never clobbered) across concurrent fibers.
+     *
+     * @return Scraper
+     */
+    public function fresh(): Scraper
+    {
+        return clone $this->scraper;
+    }
+
+    /**
      * Forward any other call to the wrapped scraper.
      *
      * When the scraper returns itself (a fluent setter), return $this so the

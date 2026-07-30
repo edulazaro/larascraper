@@ -3,6 +3,7 @@
 namespace EduLazaro\Larascraper\Runners;
 
 use EduLazaro\Larascraper\Contracts\Runner;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use LogicException;
 use Throwable;
@@ -206,35 +207,63 @@ class HttpRunner implements Runner
                 $response = $request->{$verb}($this->url, $payload);
             }
 
-            $body = $response->body();
-            $contentType = $response->header('Content-Type') ?: null;
-
-            // A binary/file response (a PDF, a ZIP, an image...) is exposed as a
-            // captured file so `$result->file` works with the http driver, exactly
-            // like capture() does on the browser driver. Text responses (HTML,
-            // JSON, XML) stay in `html`.
-            $isBinary = $this->looksBinary($contentType, $body);
-
-            return [
-                'success' => $response->successful(),
-                'status' => $response->status(),
-                'html' => $isBinary ? '' : $body,
-                'error' => $response->successful() ? null : "HTTP {$response->status()}",
-                'file' => $isBinary ? base64_encode($body) : null,
-                'contentType' => $contentType,
-                'cookies' => $this->parseSetCookies($response->headers()['Set-Cookie'] ?? []),
-            ];
+            return static::normalizeResponse($response);
         } catch (Throwable $e) {
-            return [
-                'success' => false,
-                'status' => 0,
-                'html' => null,
-                'error' => $e->getMessage(),
-                'file' => null,
-                'contentType' => null,
-                'cookies' => [],
-            ];
+            return static::transportFailure($e->getMessage());
         }
+    }
+
+    /**
+     * Normalize a settled Laravel HTTP Response into the runner result array.
+     *
+     * This is the single source of truth for turning a Response into the shape
+     * Scraper::run() consumes, so the sequential run() and the Spider's
+     * concurrent pool (which settles its requests through Http::pool) cannot
+     * drift apart on how a body, a status, a captured file or Set-Cookie is read.
+     *
+     * @param Response $response The settled HTTP response.
+     * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string, cookies: array<string, string>}
+     */
+    public static function normalizeResponse(Response $response): array
+    {
+        $body = $response->body();
+        $contentType = $response->header('Content-Type') ?: null;
+
+        // A binary/file response (a PDF, a ZIP, an image...) is exposed as a
+        // captured file so `$result->file` works with the http driver, exactly
+        // like capture() does on the browser driver. Text responses (HTML,
+        // JSON, XML) stay in `html`.
+        $isBinary = static::looksBinary($contentType, $body);
+
+        return [
+            'success' => $response->successful(),
+            'status' => $response->status(),
+            'html' => $isBinary ? '' : $body,
+            'error' => $response->successful() ? null : "HTTP {$response->status()}",
+            'file' => $isBinary ? base64_encode($body) : null,
+            'contentType' => $contentType,
+            'cookies' => static::parseSetCookies($response->headers()['Set-Cookie'] ?? []),
+        ];
+    }
+
+    /**
+     * The runner result array for a transport-level failure (no response body):
+     * a refused connection, a DNS error, a timeout. Status is 0.
+     *
+     * @param string $message The transport error message.
+     * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string, cookies: array<string, string>}
+     */
+    public static function transportFailure(string $message): array
+    {
+        return [
+            'success' => false,
+            'status' => 0,
+            'html' => null,
+            'error' => $message,
+            'file' => null,
+            'contentType' => null,
+            'cookies' => [],
+        ];
     }
 
     /**
@@ -249,7 +278,7 @@ class HttpRunner implements Runner
      * @param string $body The response body.
      * @return bool
      */
-    protected function looksBinary(?string $contentType, string $body): bool
+    protected static function looksBinary(?string $contentType, string $body): bool
     {
         $type = strtolower(trim(explode(';', (string) $contentType)[0]));
 
@@ -289,7 +318,7 @@ class HttpRunner implements Runner
      * @param array $setCookieLines Raw Set-Cookie header values.
      * @return array<string, string>
      */
-    protected function parseSetCookies(array $setCookieLines): array
+    protected static function parseSetCookies(array $setCookieLines): array
     {
         $cookies = [];
 
