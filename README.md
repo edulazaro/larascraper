@@ -15,8 +15,6 @@ Unlike Spatie Crawler, it also supports proxy authentication and is generally fa
 
 The design splits fetching from parsing. A **Scraper** orchestrates the request (retries, proxy, browser actions) and decides whether the scrape succeeded by looking at the content; a **Crawler** parses the HTML into data; and `run()` hands you back a small `ScraperResponse`. HTTP 200 is not the same as "the scrape worked" (a 200 can be a captcha or a "no results" page), so success is content based and lives in the scraper, not in the HTTP status.
 
-> **Coming from v2?** v3 is a breaking change. Fetching now lives on `$this->scrape(...)` inside `handle()`, parsing moves into `Crawler` classes, and `run()` returns a minimal `{data, success, error}` `ScraperResponse`. The older v2 docs live on the v2 git tags.
-
 ## Contents
 
 - [Install](#install)
@@ -33,7 +31,7 @@ The design splits fetching from parsing. A **Scraper** orchestrates the request 
 - [Solving simple captchas](#solving-simple-captchas)
 - [Downloading files](#downloading-files)
 - [Reading a captured PDF (text / vision)](#reading-a-captured-pdf-text--vision)
-- [Spiders (bulk crawling)](#spiders-bulk-crawling)
+- [Spiders (concurrent crawling)](#spiders-concurrent-crawling)
 - [The shared Session (cookie jar)](#the-shared-session-cookie-jar)
 - [Artisan Commands](#artisan-commands)
 - [LaraClaude integration](#laraclaude-integration)
@@ -771,100 +769,118 @@ Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotex
 >
 > Note `vision('ai')` still needs **poppler-utils**: it rasterizes each page with `pdftoppm` before sending it to the cloud vision model.
 
-## Spiders (bulk crawling)
+## Spiders (concurrent crawling)
 
-A **Scraper** fetches one page. A **Spider** is the orchestrator on top: it walks a whole catalog (a bulletin, a paginated index, a range of ids) and runs one unit Scraper per document, threading a single shared [Session](#the-shared-session-cookie-jar) through the whole run. Reach for a Spider when you are crawling *many* URLs from one source and want rate-limiting, resume, per-item error isolation and one accumulating login/CSRF session in one place; reach for a plain Scraper when you just need one page.
+A **Scraper** fetches one page. A **Spider** is the orchestrator on top: it walks a whole source (a bulletin, a paginated index, a range of ids) and drives many unit Scrapers, threading a single shared [Session](#the-shared-session-cookie-jar) through the whole run. Reach for a Spider when you are crawling *many* pages from one source and want concurrency, rate-limiting, per-item error isolation and one accumulating login/CSRF session in one place; reach for a plain Scraper when you just need one page.
 
-You extend `EduLazaro\Larascraper\Spider`, point `$scraper` at the unit Scraper class it drives, and implement `targets()`:
+A Spider is **imperative**: you extend `EduLazaro\Larascraper\Spider` and write one `handle()` that drives the whole crawl. There is no declarative wiring (no `$scraper` property, no `targets()`, `collect()`, `bootSession()`, `shouldVisit()` or `onError()` to override). You log in at the top of `handle()`, decide the work, filter it, and fan it out with **`pool()`**, the concurrent primitive:
 
 ```php
 use EduLazaro\Larascraper\Spider;
 use EduLazaro\Larascraper\Support\ScraperResponse;
 
-class BulletinSpider extends Spider
+class GamesSpider extends Spider
 {
-    protected string $scraper = BulletinScraper::class;   // the unit Scraper, run once per target
-    protected int $delay = 250;                            // ms between requests (rate-limit)
+    protected int $concurrency = 20;   // up to 20 detail pages in flight
+    protected int $delay = 250;        // ms between pool waves (rate-limit)
 
-    protected function targets(): iterable
+    public function handle(): int
     {
-        // Yield lazily (a generator) so a big or open-ended crawl never
-        // materializes the full list up front.
-        foreach (range(1, 50) as $page) {
-            foreach ($this->catalogUrls($page) as $url) {
-                yield $url;
-            }
-        }
+        // 1. Log in once. The shared Session captures the cookie, so every
+        //    scraper the spider runs afterwards inherits the session.
+        LoginScraper::make()->useSession($this->session)->handleToResponse();
+
+        // 2. Drive a list scraper inline to discover the detail urls, then
+        //    filter out what is already stored (incremental / resume).
+        $ids = collect(GameListScraper::run()->data)
+            ->reject(fn ($id) => Game::where('remote_id', $id)->exists());
+
+        // 3. Fan out: run GameScraper over each id, CONCURRENTLY.
+        $this->pool($ids, GameScraper::class, $this->save(...));
+
+        return $ids->count();
     }
 
-    protected function shouldVisit(string $url): bool
+    protected function save(mixed $data, mixed $id, ScraperResponse $response): void
     {
-        // Incremental / resume: skip what is already stored, so a re-run
-        // only fetches what is new.
-        return ! Bulletin::where('url', $url)->exists();
-    }
-
-    protected function collect(mixed $data, string $url, ScraperResponse $response): void
-    {
-        // Per-item hook: persist (or stream) each parsed document.
+        // Per-item collector: check success here, one bad page never aborts
+        // the crawl.
         if ($response->success) {
-            Bulletin::updateOrCreate(['url' => $url], $data);
+            Game::updateOrCreate(['remote_id' => $id], $data);
         }
-    }
-
-    protected function onError(string $url, \Throwable $e): void
-    {
-        // Per-item error hook: one bad document does not kill the crawl.
-        report("bulletin {$url} failed: {$e->getMessage()}");
     }
 }
 ```
 
-And the tiny unit Scraper it drives is an ordinary Scraper, one page, one Crawler:
+The unit Scrapers it drives are ordinary Scrapers. Each item is the scraper's `handle()` **params**, not a url, so the scraper builds its own url:
 
 ```php
 use EduLazaro\Larascraper\Scraper;
 use EduLazaro\Larascraper\Support\ScraperResponse;
 
-class BulletinScraper extends Scraper
+class GameScraper extends Scraper
 {
-    protected string $driver = 'http';   // required to thread the shared Session
+    protected string $driver = 'http';   // required for concurrency (see below)
 
-    protected function handle(string $url): ScraperResponse
+    protected function handle(int $id): ScraperResponse
     {
-        return $this->scrape($url)->crawl(BulletinCrawler::class)->run();
+        return $this->scrape("https://shop.com/games/{$id}")
+            ->crawl(GameCrawler::class)
+            ->run();
     }
 }
 ```
 
-Run the whole crawl with the static entry point:
+Run the whole crawl with the static entry point; `handle()`'s return value comes back to the caller:
 
 ```php
-BulletinSpider::run();
+$count = GamesSpider::run();
 ```
 
 ### The members
 
 | Member | Description |
 |---|---|
-| `protected string $scraper` | The unit Scraper class-string, run once per target. Required; a Spider that forgets it fails fast with a `LogicException`. |
-| `protected int $delay` | Milliseconds to wait between requests (rate-limit); `0` (default) means no delay. |
-| `targets(): iterable` | **Abstract.** Yield the target URLs, lazily (a generator), so the full list is never materialized up front. |
-| `collect($data, $url, $response): void` | Per-item hook. Override to persist or stream each result. Receives the scrape `data`, the `url`, and the full `ScraperResponse` (so you can branch on `$response->success`). No-op by default. |
-| `bootSession(Session $session): void` | Optional hook to establish the session **once** before the crawl (a login, a CSRF token), so every target inherits the resulting cookies. No-op by default. |
-| `shouldVisit($url): bool` | Incremental/resume filter. Return `false` to skip a target. Defaults to `true`. |
-| `onError($url, $e): void` | Per-item error hook. A `RequestException` (or any `Throwable`) raised while handling a target is routed here instead of aborting the crawl. No-op by default. |
+| `handle(): mixed` | **Abstract.** The whole orchestration: log in, decide the work, filter it, drive scrapers with `pool()`. Its return value is what `Spider::run()` hands back (a count, a summary, ...). |
+| `protected int $concurrency` | Default number of scraper runs in flight per `pool()` wave. `10` by default; override per call with `pool(..., concurrency: N)`. |
+| `protected int $delay` | Milliseconds to pause between `pool()` waves (rate-limit); `0` (default) means no pause. |
+| `public ?Session $session` | The shared [cookie jar](#the-shared-session-cookie-jar) for this run, created for you by `run()` and threaded into every scraper `pool()` drives. Public so `handle()` can hand it to a login scraper: `X::make()->useSession($this->session)`. |
+| `Spider::run(...$params)` | Static entry point. Builds the spider through the container (so constructor dependencies inject), gives it a fresh `Session`, and returns `handle()`'s value. |
+| `Spider::make(...$params)` | Build the instance through the container without running it (for when you drive `handle()` yourself). |
 
-### How `run()` and `drive()` work
+### `pool()` in detail
 
-`Spider::run(...$params)` builds the spider through the container (so constructor dependencies are injected) and calls `drive()`, the crawl engine. `drive()` does this once per run:
+```php
+protected function pool(
+    iterable $items,
+    string|PendingScraper $scraper,
+    callable $collect,
+    ?int $concurrency = null,
+): void
+```
 
-1. Creates **one** `Session` and calls `bootSession($session)` on it.
-2. Iterates `targets()`, and for each URL: skips it if `shouldVisit($url)` is false; otherwise resolves the unit Scraper with `($this->scraper)::make()->useSession($session)` and drives it with `handleToResponse([$url])`, then hands the result to `collect($response->data, $url, $response)`.
-3. Any `Throwable` from a target is caught and routed to `onError($url, $e)`, so one bad document does not abort the rest.
-4. Sleeps `$delay` milliseconds between targets.
+`pool()` runs `$scraper` over every item in `$items` **concurrently** and calls `$collect` once per finished item. Concretely:
 
-Because each unit Scraper is driven through `handleToResponse()`, the same wrapping rules as `Scraper::run()` apply: a `ScrapeException` (a captcha, a missing field) folds into a `ScraperResponse` with `success = false`, which reaches `collect()`; a genuine request-level `RequestException` is thrown and reaches `onError()`.
+- **`$items`** are the per-run **params**, not urls. An **array** item is spread as the scraper's `handle()` arguments (`['id' => 5, 'lang' => 'en']` or `[5, 'en']`); any **scalar** is passed as the single argument. The scraper builds its own url from those params. `$items` may be a lazy generator, so an open-ended crawl never materializes the full list up front.
+- **`$scraper`** is either a class-string (`GameScraper::class`, made fresh through the container per item) or a configured template from `Scraper::with(...)` (e.g. `GameScraper::with(driver: 'http', tries: 5)`), cloned per item so its driver/proxy/props apply to each run without sharing mutable state across items. The shared `Session` is threaded into every run.
+- **`$collect`** is any callable, an inline closure or a method reference like `$this->save(...)`, called once per item as **`($data, $item, $response)`**: the scrape `data`, the `$item` that produced it, and the full `ScraperResponse`. Branch on `$response->success` inside it.
+- **`$concurrency`** caps how many runs are in flight; it defaults to the `$concurrency` property.
+
+**How the concurrency works.** Each item runs its scraper inside a PHP **Fiber**. When a scraper fetches on the `http` driver, the fetch **suspends** the fiber with a fully-resolved request spec instead of blocking. The scheduler gathers every currently-suspended fiber's spec into **one `Http::pool()` wave** (overlapped `curl_multi` network I/O under one handler), then resumes each fiber with its settled `Response`. As fibers finish they free their slot and the scheduler refills from `$items` to keep `$concurrency` in flight; `$delay` milliseconds pass between waves. A multi-step scraper's later fetch rides the same wave as another item's first fetch.
+
+**Per-item error isolation.** A `RequestException`, or any other `Throwable`, from one item's run is caught and turned into a failed `ScraperResponse` (`success = false`, `error` set, `data = null`) that is **still** handed to `$collect`. One bad item never aborts the crawl; you see it as `! $response->success` in the collector. The retriable statuses `408`, `429`, `500`, `502`, `503`, `504` are retried in the concurrent path too, at the scheduler level (a retriable wave result is re-issued in a later wave rather than resumed), so it matches the sequential retry set.
+
+### Where `bootSession` / `shouldVisit` / `onError` went
+
+They are not framework hooks anymore, they are just code you write inside `handle()`:
+
+- **Boot the session**: run a login scraper at the top of `handle()` with `->useSession($this->session)` (see the example). Every later run inherits the cookie.
+- **Skip already-stored work**: filter `$items` *before* `pool()` (`->reject(...)`, `where(...)->exists()`), so you never fetch what you already have.
+- **Handle a bad page**: check `$response->success` inside `$collect`; a failed run arrives there as a failed `ScraperResponse`, so a single bad page is data, not an abort.
+
+### Concurrency needs the `http` driver
+
+`pool()`'s overlap comes from `Http::pool()`, so it only applies to the **`http`** driver. The **`browser`** (Puppeteer) driver is **not** pooled: each browser run is an isolated Chromium, so items on that driver run one at a time (still correct, just not overlapped). And the overlap is **across items**: dependent multi-step requests *within one item* (log in, then read a protected page in the same `handle()`) stay sequential, which is exactly what you want, only independent items overlap.
 
 ## The shared Session (cookie jar)
 
@@ -877,15 +893,15 @@ $session->cookiesFor('shop.test');            // ['name' => 'value', ...] for on
 $session->store('shop.test', ['sid' => '9']); // merge cookies for a host (last-wins)
 ```
 
-A Spider creates and threads the Session for you (see `bootSession()` above), so you rarely touch it directly. When you drive scrapers by hand, a Scraper is made session-aware with `useSession()` (instance, chainable) or `withSession()` (static, mirrors `with()`):
+A Spider creates the Session for you in `run()` and threads it into every scraper `pool()` drives, and exposes it as `$this->session` so `handle()` can hand it to a login scraper up front (`X::make()->useSession($this->session)->handleToResponse()`), so you rarely touch it directly. When you drive scrapers by hand, a Scraper is made session-aware with `useSession()` (instance, chainable) or `withSession()` (static, mirrors `with()`):
 
 ```php
 use EduLazaro\Larascraper\Support\Session;
 
 $session = new Session();
 
-BulletinScraper::withSession($session)->run($firstUrl);   // static entry point
-BulletinScraper::make()->useSession($session)->handleToResponse([$nextUrl]);
+GameScraper::withSession($session)->run($firstUrl);   // static entry point
+GameScraper::make()->useSession($session)->handleToResponse([$nextUrl]);
 ```
 
 The jar is merged **under** any explicit per-call `cookies(...)`, so an explicit cookie always wins over the session, and it only receives `Set-Cookie` after a **successful** fetch, so a failed or 5xx response never clobbers the good session cookies later targets rely on. Cookies stay transport state: they live on `$this->request->cookies` inside `handle()` and never surface on the content-only `ScraperResponse`.
@@ -990,7 +1006,7 @@ In general, it's not recommended to use NVM on production environments.
 
 ## Examples
 
-A few complete, copy-pasteable v3 scrapers that put the pieces together.
+A few complete, copy-pasteable scrapers that put the pieces together.
 
 **1. A basic HTML scraper with a Crawler** - fetch a page, parse fields, signal a content failure:
 

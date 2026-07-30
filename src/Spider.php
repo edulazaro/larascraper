@@ -32,7 +32,7 @@ use Throwable;
  *       public function handle(): mixed
  *       {
  *           // 1. Log in once; the shared Session captures the cookie.
- *           LoginScraper::make()->useSession($this->session)->handle();
+ *           LoginScraper::make()->useSession($this->session)->handleToResponse();
  *
  *           // 2. Decide the work (params, not urls) and filter it.
  *           $ids = collect(range(1, 500))->reject(fn ($id) => Bike::where('remote_id', $id)->exists());
@@ -181,6 +181,7 @@ abstract class Spider
         $active = [];
         $slotId = 0;
         $firstWave = true;
+        $sleptForRetry = false;
 
         static::$schedulerDepth++;
 
@@ -217,14 +218,29 @@ abstract class Spider
                 $specs = [];
 
                 foreach ($active as $id => $slot) {
+                    // A degenerate attempt budget (maxRetries < 1) issues no
+                    // request at all, matching the sequential loop
+                    // `while (++$attempt <= $maxRetries)`, which never enters:
+                    // the slot is left out of the wave and settles as a failure
+                    // below (resumed with null => transportFailure).
+                    if ((int) $slot['spec']['maxRetries'] < 1) {
+                        continue;
+                    }
+
                     $specs[$id] = $slot['spec'];
                 }
 
-                if (!$firstWave && $this->delay > 0) {
+                // The rate-limit delay throttles fresh waves, but a wave that
+                // only re-issues retried requests already paused for
+                // retryDelay at the bottom of the previous iteration, so skip
+                // the rate-limit pause there to avoid stacking the two sleeps
+                // additively (the backoff already spaced this wave out).
+                if (!$firstWave && $this->delay > 0 && !$sleptForRetry) {
                     usleep($this->delay * 1000);
                 }
 
                 $firstWave = false;
+                $sleptForRetry = false;
 
                 $results = $this->runWave($specs);
 
@@ -267,6 +283,7 @@ abstract class Spider
                 // retried requests.
                 if ($retrySleep > 0) {
                     sleep($retrySleep);
+                    $sleptForRetry = true;
                 }
             }
         } finally {
