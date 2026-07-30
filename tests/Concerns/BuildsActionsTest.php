@@ -121,6 +121,84 @@ class BuildsActionsTest extends BaseTestCase
         );
     }
 
+    public function test_select_records_a_single_string_value(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', '11')
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'select', 'selector' => '#organo', 'value' => '11']],
+            $actions
+        );
+    }
+
+    public function test_select_records_all_values_of_an_array(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', ['11', '12', '13'])
+            ->getActions();
+
+        // Every element is kept, in order, not collapsed to the last one.
+        $this->assertSame(
+            [['type' => 'select', 'selector' => '#organo', 'value' => ['11', '12', '13']]],
+            $actions
+        );
+    }
+
+    public function test_select_array_survives_the_json_payload_to_node(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', ['11', '12', '13'])
+            ->getActions();
+
+        // The runner json_encode()s the actions before handing them to
+        // scraper.cjs; assert the array carries all elements over that wire so
+        // the .cjs spread `page.select(sel, ...value)` selects each option.
+        $decoded = json_decode(json_encode($actions), true);
+
+        $this->assertSame(['11', '12', '13'], $decoded[0]['value']);
+    }
+
+    public function test_select_casts_array_elements_to_strings(): void
+    {
+        // <select> option values are strings; ints would make Puppeteer throw
+        // "Values must be strings". Normalize to a list of strings.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', [11, 12, 13])
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'select', 'selector' => '#organo', 'value' => ['11', '12', '13']]],
+            $actions
+        );
+    }
+
+    public function test_select_reindexes_a_sparse_array_to_a_json_list(): void
+    {
+        // A non-sequential PHP array would json_encode() to a JSON object,
+        // breaking Array.isArray() in Node. array_values() keeps it a JSON list.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', [2 => '11', 5 => '12'])
+            ->getActions();
+
+        $this->assertSame(['11', '12'], $actions[0]['value']);
+
+        $decoded = json_decode(json_encode($actions), true);
+        $this->assertSame(['11', '12'], $decoded[0]['value']);
+    }
+
+    public function test_select_keeps_a_string_value_untouched(): void
+    {
+        // Back-compat: a string value must serialize exactly as before, not be
+        // wrapped into a list.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->select('#organo', '11')
+            ->getActions();
+
+        $this->assertSame('11', $actions[0]['value']);
+    }
+
     public function test_when_builds_a_conditional_action_with_then_and_else(): void
     {
         $actions = TestScraper::make()->scrape('https://example.com')

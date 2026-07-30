@@ -527,7 +527,7 @@ protected function handle(string $url): ScraperResponse
 | `->click($selector)` | Click an element (waits for it first). |
 | `->click($selector, waitForNavigation: true)` / `->clickAndWait($selector)` | Click that triggers a page load, and wait for it. |
 | `->type($selector, $text)` | Type text into an input (waits for it first). |
-| `->select($selector, $value)` | Choose an option (by value) in a `<select>`. |
+| `->select($selector, $value)` | Choose an option (by value) in a `<select>`. Pass an **array** of values to select several at once on a `<select multiple>`, e.g. `->select('#organo', ['11', '12', '13'])`; they are applied in a single call so earlier values are not deselected. A string selects one option. |
 | `->setValue($selector, $value)` | Set an element's value directly, firing `input` + `change` events. For hidden inputs populated by a custom widget (multiselects backed by an `<input type="hidden">`), or fields `type()`/`select()` can't reach. |
 | `->hover($selector)` | Hover over an element. |
 | `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`...). Pass `waitForNavigation: true` when it submits a form. |

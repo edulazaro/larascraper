@@ -414,10 +414,16 @@ async function runActions(page, actions, timeout) {
                 await page.waitForSelector(action.selector, { timeout });
                 await page.type(action.selector, action.text ?? '');
                 break;
-            case 'select':
+            case 'select': {
                 await page.waitForSelector(action.selector, { timeout });
-                await page.select(action.selector, action.value);
+                const values = Array.isArray(action.value) ? action.value : [action.value];
+                // Skip an empty list: page.select(selector) with zero values
+                // deselects every option, which is never what select([]) means.
+                if (values.length > 0) {
+                    await page.select(action.selector, ...values);
+                }
                 break;
+            }
             case 'setValue':
                 await page.waitForSelector(action.selector, { timeout });
                 await page.$eval(action.selector, (el, v) => {

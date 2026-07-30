@@ -73,10 +73,26 @@ trait BuildsActions
     }
 
     /**
-     * Select an option (by value) on a <select> matching the CSS selector.
+     * Select one or more options (by value) on a <select> matching the CSS selector.
+     *
+     * Pass a string to select a single option (unchanged behaviour). Pass an
+     * array of values to select several at once on a <select multiple>; they are
+     * applied in a single page.select() call so earlier values are not
+     * deselected. An array is normalized to a sequential list of strings so it
+     * always json_encode()s as a JSON array (not an object) and every element
+     * reaches Puppeteer as a string; the Node runner spreads that list into
+     * page.select(). A string value is recorded untouched.
+     *
+     * @param string $selector CSS selector of the <select>.
+     * @param string|array $value A single value, or a list of values for a
+     *        multi-select.
      */
-    public function select(string $selector, string $value): static
+    public function select(string $selector, string|array $value): static
     {
+        if (is_array($value)) {
+            $value = array_values(array_map(static fn ($v): string => (string) $v, $value));
+        }
+
         $this->actions[] = ['type' => 'select', 'selector' => $selector, 'value' => $value];
         return $this;
     }
