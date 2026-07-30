@@ -8,6 +8,7 @@ use EduLazaro\Larascraper\Support\FetchBuilder;
 use EduLazaro\Larascraper\Support\PendingScraper;
 use EduLazaro\Larascraper\Support\RequestResponse;
 use EduLazaro\Larascraper\Support\ScraperResponse;
+use EduLazaro\Larascraper\Support\Session;
 use EduLazaro\Larascraper\Exceptions\ScrapeException;
 use ReflectionClass;
 use ReflectionMethod;
@@ -97,6 +98,15 @@ abstract class Scraper
 
     /** @var string|null Cookie domain (defaults to the URL host), or null. */
     protected ?string $cookieDomain = null;
+
+    /**
+     * @var Session|null A shared cookie jar threaded across a crawl, or null.
+     *
+     * The scraper is session-AWARE, not the owner: the jar is created elsewhere
+     * (a Spider, or the caller) and injected with useSession(), then handed to
+     * every FetchBuilder via fetchDefaults() so cookies accumulate across fetches.
+     */
+    protected ?Session $session = null;
 
     /**
      * Create a new scraper instance through Laravel's service container, so
@@ -189,6 +199,37 @@ abstract class Scraper
     {
         $instance = static::make();
         $instance->applyWith($params);
+
+        return new PendingScraper($instance);
+    }
+
+    /**
+     * Make the scraper session-aware by injecting a shared cookie jar.
+     *
+     * The Session is NOT owned here: one mutable jar is threaded into every
+     * FetchBuilder this scraper creates, so cookies established on one fetch are
+     * carried into the next. Chainable.
+     *
+     * @param Session $session The shared cookie jar.
+     * @return static
+     */
+    public function useSession(Session $session): static
+    {
+        $this->session = $session;
+        return $this;
+    }
+
+    /**
+     * Configure a fresh instance with a shared Session, then hand it to a
+     * PendingScraper so it survives to `->run()`. Mirrors with().
+     *
+     * @param Session $session The shared cookie jar.
+     * @return PendingScraper
+     */
+    public static function withSession(Session $session): PendingScraper
+    {
+        $instance = static::make();
+        $instance->useSession($session);
 
         return new PendingScraper($instance);
     }
@@ -338,7 +379,8 @@ abstract class Scraper
      *     body: mixed,
      *     bodyFormat: string,
      *     cookies: array,
-     *     cookieDomain: ?string
+     *     cookieDomain: ?string,
+     *     session: ?Session
      * }
      */
     protected function fetchDefaults(): array
@@ -358,6 +400,7 @@ abstract class Scraper
             'bodyFormat' => $this->bodyFormat,
             'cookies' => $this->cookies,
             'cookieDomain' => $this->cookieDomain,
+            'session' => $this->session,
         ];
     }
 

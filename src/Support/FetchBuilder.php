@@ -82,6 +82,9 @@ class FetchBuilder
     /** @var string|null Cookie domain, or null. */
     protected ?string $cookieDomain;
 
+    /** @var Session|null A shared cookie jar threaded across a crawl, or null. */
+    protected ?Session $session;
+
     /** @var RequestResponse|null The memoized fetch result (idempotency). */
     protected ?RequestResponse $fetched = null;
 
@@ -109,6 +112,7 @@ class FetchBuilder
         $this->bodyFormat = $defaults['bodyFormat'] ?? 'form';
         $this->cookies = $defaults['cookies'] ?? [];
         $this->cookieDomain = $defaults['cookieDomain'] ?? null;
+        $this->session = $defaults['session'] ?? null;
     }
 
     /**
@@ -202,6 +206,21 @@ class FetchBuilder
     }
 
     /**
+     * Thread a shared cookie jar through this request.
+     *
+     * On a driver that carries outbound cookies, the jar is merged into the
+     * request cookies before the fetch (under any explicit per-call cookies) and
+     * receives Set-Cookie after a SUCCESSFUL fetch, so a crawl keeps a single
+     * accumulating session. On a driver that cannot carry cookies (the browser
+     * driver, for now) the jar is a documented no-op.
+     */
+    public function session(Session $session): static
+    {
+        $this->session = $session;
+        return $this;
+    }
+
+    /**
      * Set proxy with optional auth.
      */
     public function proxy(string $proxy, ?string $user = null, ?string $pass = null): static
@@ -262,6 +281,8 @@ class FetchBuilder
             return $this->fetched;
         }
 
+        $host = parse_url($this->url, PHP_URL_HOST) ?: '';
+
         /** @var class-string<Runner> $runnerClass */
         $runnerClass = $this->drivers[$this->driver];
 
@@ -270,8 +291,21 @@ class FetchBuilder
             ->withHeaders($this->headers)
             ->withActions($this->actions)
             ->method($this->httpMethod)
-            ->body($this->body, $this->bodyFormat)
-            ->cookies($this->cookies, $this->cookieDomain);
+            ->body($this->body, $this->bodyFormat);
+
+        // A shared Session only rides along on drivers that can carry outbound
+        // cookies; on one that cannot (the browser driver, for now) the jar is a
+        // documented no-op instead of a throw, so a login/CSRF crawl simply has
+        // no effect there rather than breaking. Merge the jar's cookies for this
+        // host UNDER any explicit per-call cookies (which win), so an established
+        // session rides along without clobbering an override.
+        $sessionActive = $this->session !== null && $runner->supportsCookies();
+
+        if ($sessionActive) {
+            $this->cookies = array_merge($this->session->cookiesFor($host), $this->cookies);
+        }
+
+        $runner->cookies($this->cookies, $this->cookieDomain);
 
         if ($this->proxy) {
             $runner->proxy($this->proxy);
@@ -338,6 +372,15 @@ class FetchBuilder
 
         if (!($response['success'] ?? false)) {
             throw new RequestException($req);
+        }
+
+        // Accumulate Set-Cookie back into the shared jar so the next request in
+        // the crawl carries them, but ONLY on a successful fetch: cookies from a
+        // failed response (an error page, an expired-session redirect) must never
+        // clobber the good session cookies later targets rely on. The jar is
+        // shared state; cookies still never surface on ScraperResponse.
+        if ($sessionActive) {
+            $this->session->store($host, $req->cookies);
         }
 
         return $req;

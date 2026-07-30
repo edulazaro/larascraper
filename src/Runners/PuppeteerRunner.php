@@ -133,6 +133,12 @@ class PuppeteerRunner implements Runner
     /**
      * Set request cookies. Not supported by the browser driver yet.
      *
+     * Passing explicit cookies here is still a loud, deliberate error so the
+     * limitation is never silently ignored. A shared Session, by contrast, is
+     * skipped entirely on this driver (see supportsCookies()) and never reaches
+     * this method, so threading a jar through a browser crawl is a no-op rather
+     * than a throw.
+     *
      * @param array       $cookies
      * @param string|null $domain
      * @throws \LogicException If cookies are provided.
@@ -147,6 +153,17 @@ class PuppeteerRunner implements Runner
         }
 
         return $this;
+    }
+
+    /**
+     * The browser driver cannot carry outbound cookies yet, so a shared Session
+     * threaded through it is a documented no-op (see cookies()).
+     *
+     * @return bool
+     */
+    public function supportsCookies(): bool
+    {
+        return false;
     }
 
     /**

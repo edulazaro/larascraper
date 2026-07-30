@@ -99,6 +99,19 @@ interface Runner
     public function cookies(array $cookies, ?string $domain = null): static;
 
     /**
+     * Whether this runner can carry outbound request cookies.
+     *
+     * A shared Session (the cookie jar threaded across a crawl) is only merged
+     * in and stored back on drivers that answer true here; on a driver that
+     * cannot carry cookies the jar is a silent no-op instead of throwing. It
+     * does NOT relax cookies() itself: passing explicit cookies() to a driver
+     * that returns false is still a loud, deliberate error.
+     *
+     * @return bool
+     */
+    public function supportsCookies(): bool;
+
+    /**
      * Run the scraper and return the normalized result array.
      *
      * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string}

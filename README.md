@@ -33,6 +33,8 @@ The design splits fetching from parsing. A **Scraper** orchestrates the request 
 - [Solving simple captchas](#solving-simple-captchas)
 - [Downloading files](#downloading-files)
 - [Reading a captured PDF (text / vision)](#reading-a-captured-pdf-text--vision)
+- [Spiders (bulk crawling)](#spiders-bulk-crawling)
+- [The shared Session (cookie jar)](#the-shared-session-cookie-jar)
 - [Artisan Commands](#artisan-commands)
 - [LaraClaude integration](#laraclaude-integration)
 - [Testing a scraper](#testing-a-scraper)
@@ -768,6 +770,127 @@ Each engine shells out to its tool (`ghostscript`, `poppler-utils` for `pdftotex
 > | `vision('tesseract')` | `tesseract` | `apt-get install tesseract-ocr` |
 >
 > Note `vision('ai')` still needs **poppler-utils**: it rasterizes each page with `pdftoppm` before sending it to the cloud vision model.
+
+## Spiders (bulk crawling)
+
+A **Scraper** fetches one page. A **Spider** is the orchestrator on top: it walks a whole catalog (a bulletin, a paginated index, a range of ids) and runs one unit Scraper per document, threading a single shared [Session](#the-shared-session-cookie-jar) through the whole run. Reach for a Spider when you are crawling *many* URLs from one source and want rate-limiting, resume, per-item error isolation and one accumulating login/CSRF session in one place; reach for a plain Scraper when you just need one page.
+
+You extend `EduLazaro\Larascraper\Spider`, point `$scraper` at the unit Scraper class it drives, and implement `targets()`:
+
+```php
+use EduLazaro\Larascraper\Spider;
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
+class BulletinSpider extends Spider
+{
+    protected string $scraper = BulletinScraper::class;   // the unit Scraper, run once per target
+    protected int $delay = 250;                            // ms between requests (rate-limit)
+
+    protected function targets(): iterable
+    {
+        // Yield lazily (a generator) so a big or open-ended crawl never
+        // materializes the full list up front.
+        foreach (range(1, 50) as $page) {
+            foreach ($this->catalogUrls($page) as $url) {
+                yield $url;
+            }
+        }
+    }
+
+    protected function shouldVisit(string $url): bool
+    {
+        // Incremental / resume: skip what is already stored, so a re-run
+        // only fetches what is new.
+        return ! Bulletin::where('url', $url)->exists();
+    }
+
+    protected function collect(mixed $data, string $url, ScraperResponse $response): void
+    {
+        // Per-item hook: persist (or stream) each parsed document.
+        if ($response->success) {
+            Bulletin::updateOrCreate(['url' => $url], $data);
+        }
+    }
+
+    protected function onError(string $url, \Throwable $e): void
+    {
+        // Per-item error hook: one bad document does not kill the crawl.
+        report("bulletin {$url} failed: {$e->getMessage()}");
+    }
+}
+```
+
+And the tiny unit Scraper it drives is an ordinary Scraper, one page, one Crawler:
+
+```php
+use EduLazaro\Larascraper\Scraper;
+use EduLazaro\Larascraper\Support\ScraperResponse;
+
+class BulletinScraper extends Scraper
+{
+    protected string $driver = 'http';   // required to thread the shared Session
+
+    protected function handle(string $url): ScraperResponse
+    {
+        return $this->scrape($url)->crawl(BulletinCrawler::class)->run();
+    }
+}
+```
+
+Run the whole crawl with the static entry point:
+
+```php
+BulletinSpider::run();
+```
+
+### The members
+
+| Member | Description |
+|---|---|
+| `protected string $scraper` | The unit Scraper class-string, run once per target. Required; a Spider that forgets it fails fast with a `LogicException`. |
+| `protected int $delay` | Milliseconds to wait between requests (rate-limit); `0` (default) means no delay. |
+| `targets(): iterable` | **Abstract.** Yield the target URLs, lazily (a generator), so the full list is never materialized up front. |
+| `collect($data, $url, $response): void` | Per-item hook. Override to persist or stream each result. Receives the scrape `data`, the `url`, and the full `ScraperResponse` (so you can branch on `$response->success`). No-op by default. |
+| `bootSession(Session $session): void` | Optional hook to establish the session **once** before the crawl (a login, a CSRF token), so every target inherits the resulting cookies. No-op by default. |
+| `shouldVisit($url): bool` | Incremental/resume filter. Return `false` to skip a target. Defaults to `true`. |
+| `onError($url, $e): void` | Per-item error hook. A `RequestException` (or any `Throwable`) raised while handling a target is routed here instead of aborting the crawl. No-op by default. |
+
+### How `run()` and `drive()` work
+
+`Spider::run(...$params)` builds the spider through the container (so constructor dependencies are injected) and calls `drive()`, the crawl engine. `drive()` does this once per run:
+
+1. Creates **one** `Session` and calls `bootSession($session)` on it.
+2. Iterates `targets()`, and for each URL: skips it if `shouldVisit($url)` is false; otherwise resolves the unit Scraper with `($this->scraper)::make()->useSession($session)` and drives it with `handleToResponse([$url])`, then hands the result to `collect($response->data, $url, $response)`.
+3. Any `Throwable` from a target is caught and routed to `onError($url, $e)`, so one bad document does not abort the rest.
+4. Sleeps `$delay` milliseconds between targets.
+
+Because each unit Scraper is driven through `handleToResponse()`, the same wrapping rules as `Scraper::run()` apply: a `ScrapeException` (a captcha, a missing field) folds into a `ScraperResponse` with `success = false`, which reaches `collect()`; a genuine request-level `RequestException` is thrown and reaches `onError()`.
+
+## The shared Session (cookie jar)
+
+`EduLazaro\Larascraper\Support\Session` is a small, mutable cookie jar that a whole crawl shares. One `Session` object is created once and **threaded by reference** into every Scraper of the run, so a login or CSRF cookie established on the first request rides along to every request that follows and the jar keeps accumulating.
+
+Cookies are held per **host** (the request URL's host), last-wins on name collisions, so two hosts never leak into each other. It has two methods, plus `all()` to inspect it:
+
+```php
+$session->cookiesFor('shop.test');            // ['name' => 'value', ...] for one host
+$session->store('shop.test', ['sid' => '9']); // merge cookies for a host (last-wins)
+```
+
+A Spider creates and threads the Session for you (see `bootSession()` above), so you rarely touch it directly. When you drive scrapers by hand, a Scraper is made session-aware with `useSession()` (instance, chainable) or `withSession()` (static, mirrors `with()`):
+
+```php
+use EduLazaro\Larascraper\Support\Session;
+
+$session = new Session();
+
+BulletinScraper::withSession($session)->run($firstUrl);   // static entry point
+BulletinScraper::make()->useSession($session)->handleToResponse([$nextUrl]);
+```
+
+The jar is merged **under** any explicit per-call `cookies(...)`, so an explicit cookie always wins over the session, and it only receives `Set-Cookie` after a **successful** fetch, so a failed or 5xx response never clobbers the good session cookies later targets rely on. Cookies stay transport state: they live on `$this->request->cookies` inside `handle()` and never surface on the content-only `ScraperResponse`.
+
+> **Driver caveat: http yes, browser no.** The shared jar only works on the **`http`** driver. On the **`browser`** (Puppeteer) driver it is a documented **no-op**: each Puppeteer run is an isolated browser and that driver rejects explicit cookies, so `Runner::supportsCookies()` is false there. A Session gives session continuity for http-driver spiders, not browser-driver ones, which is why the unit Scraper in the example sets `protected string $driver = 'http';`.
 
 ## Artisan Commands
 

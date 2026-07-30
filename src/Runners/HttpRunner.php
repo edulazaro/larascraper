@@ -163,6 +163,17 @@ class HttpRunner implements Runner
     }
 
     /**
+     * The http driver carries outbound cookies, so a shared Session threads
+     * through it.
+     *
+     * @return bool
+     */
+    public function supportsCookies(): bool
+    {
+        return true;
+    }
+
+    /**
      * Run the HTTP request and return the normalized result array.
      *
      * @return array{success: bool, status: int, html: ?string, error: ?string, file: ?string, contentType: ?string}
