@@ -75,7 +75,7 @@ class ExceptionsTest extends BaseTestCase
     /**
      * A ScrapeException raised by the scraper's OWN handle() is caught by run()
      * (handleToResponse) and folded into a failed ScraperResponse, exactly like
-     * $this->fail() — the caller sees success = false, not an exception.
+     * $this->fail(): the caller sees success = false, not an exception.
      */
     public function test_a_scraper_scrape_exception_becomes_a_failed_response(): void
     {
