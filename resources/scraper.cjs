@@ -461,15 +461,30 @@ async function runActions(page, actions, timeout) {
             }
             case 'repeatUntil': {
                 // Always bounded: never an unbounded while(true) that could
-                // hammer a server. `delay` throttles between iterations.
+                // hammer a server. `delay` throttles between iterations. A throw
+                // inside one iteration counts as a failed attempt (not fatal):
+                // the loop re-evaluates the condition and retries on the next
+                // pass, bounded by `max`, instead of aborting the whole run on a
+                // transient bad page. If every attempt is exhausted without the
+                // condition ever holding and the last attempt errored, that
+                // error is surfaced rather than failing silently.
                 const max = Math.max(1, action.max ?? 5);
                 const delay = Math.max(0, action.delay ?? 0);
+                let lastError = null;
                 for (let i = 0; i < max; i++) {
-                    if (await evaluateCondition(page, action.condition)) break;
-                    await runActions(page, action.body, timeout);
+                    if (await evaluateCondition(page, action.condition)) { lastError = null; break; }
+                    try {
+                        await runActions(page, action.body, timeout);
+                        lastError = null;
+                    } catch (e) {
+                        lastError = e;
+                    }
                     if (delay > 0 && i < max - 1) {
                         await new Promise(resolve => setTimeout(resolve, delay));
                     }
+                }
+                if (lastError && !(await evaluateCondition(page, action.condition))) {
+                    throw lastError;
                 }
                 break;
             }
@@ -550,9 +565,21 @@ async function runActions(page, actions, timeout) {
                     await page.keyboard.press(action.key);
                 }
                 break;
-            case 'waitForSelector':
-                await page.waitForSelector(action.selector, { timeout });
+            case 'waitForSelector': {
+                // A per-action `timeout` overrides the global one; `optional`
+                // makes a timeout a valid outcome (the element may legitimately
+                // never appear, e.g. an empty result set) so the run continues
+                // instead of failing.
+                const waitOpts = { timeout: action.timeout ?? timeout };
+                if (action.optional) {
+                    try {
+                        await page.waitForSelector(action.selector, waitOpts);
+                    } catch (e) { /* optional wait timed out: continue */ }
+                } else {
+                    await page.waitForSelector(action.selector, waitOpts);
+                }
                 break;
+            }
             case 'waitForNavigation':
                 await page.waitForNavigation({ waitUntil: 'networkidle2', timeout });
                 break;

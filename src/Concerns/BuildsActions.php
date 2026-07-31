@@ -172,11 +172,42 @@ trait BuildsActions
     }
 
     /**
-     * Wait until an element matching the CSS selector appears in the DOM.
+     * Wait until an element appears in the DOM.
+     *
+     * Pass a single CSS selector, or an array of selectors to wait for ANY of
+     * them: the list is grouped into one comma selector, so the wait resolves as
+     * soon as the first match appears (handy for "results OR a no-results
+     * marker", where either is a valid terminal state).
+     *
+     * By default a timeout throws and fails the run. Set 'optional' => true to
+     * treat a timeout as a valid outcome: the element may legitimately never
+     * appear (e.g. an empty result set), so the wait is swallowed and the run
+     * continues instead of failing. 'timeout' overrides the global fetch timeout
+     * for this one wait (in milliseconds), so an optional wait can be kept short.
+     *
+     * @param string|array $selector A CSS selector, or a list of selectors to
+     *        wait for any of.
+     * @param array $options 'optional' (bool, default false: swallow a timeout
+     *        and continue) and 'timeout' (int ms, overrides the global timeout
+     *        for this wait only).
      */
-    public function waitForSelector(string $selector): static
+    public function waitForSelector(string|array $selector, array $options = []): static
     {
-        $this->actions[] = ['type' => 'waitForSelector', 'selector' => $selector];
+        $selector = is_array($selector)
+            ? implode(', ', array_map(static fn ($s): string => (string) $s, $selector))
+            : $selector;
+
+        $action = ['type' => 'waitForSelector', 'selector' => $selector];
+
+        if (isset($options['timeout'])) {
+            $action['timeout'] = (int) $options['timeout'];
+        }
+
+        if (! empty($options['optional'])) {
+            $action['optional'] = true;
+        }
+
+        $this->actions[] = $action;
         return $this;
     }
 

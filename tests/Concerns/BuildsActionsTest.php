@@ -243,6 +243,55 @@ class BuildsActionsTest extends BaseTestCase
         );
     }
 
+    public function test_wait_for_selector_builds_the_expected_action(): void
+    {
+        // Back-compat: a single selector with no options serializes exactly as
+        // before, with no timeout/optional keys added.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector('.results')
+            ->getActions();
+
+        $this->assertSame([['type' => 'waitForSelector', 'selector' => '.results']], $actions);
+    }
+
+    public function test_wait_for_selector_joins_an_array_into_a_comma_selector(): void
+    {
+        // A list of selectors becomes one comma (group) selector, so the wait
+        // resolves as soon as ANY of them appears (results OR a no-results marker).
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector(['div.searchresult.doc', '.searchNoResult'])
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'waitForSelector', 'selector' => 'div.searchresult.doc, .searchNoResult']],
+            $actions
+        );
+    }
+
+    public function test_wait_for_selector_records_optional_and_timeout_options(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector('.results', ['optional' => true, 'timeout' => 8000])
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'waitForSelector', 'selector' => '.results', 'timeout' => 8000, 'optional' => true]],
+            $actions
+        );
+    }
+
+    public function test_wait_for_selector_omits_optional_when_falsey(): void
+    {
+        // optional => false must not add the key, keeping the default,
+        // non-optional wire shape identical to the no-options call.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector('.results', ['optional' => false])
+            ->getActions();
+
+        $this->assertArrayNotHasKey('optional', $actions[0]);
+        $this->assertArrayNotHasKey('timeout', $actions[0]);
+    }
+
     public function test_when_builds_a_conditional_action_with_then_and_else(): void
     {
         $actions = TestScraper::make()->scrape('https://example.com')

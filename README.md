@@ -546,7 +546,7 @@ protected function handle(string $url): ScraperResponse
 | `->check($selector)` / `->uncheck($selector)` | Tick / untick every matching checkbox, firing a bubbling `change` event. Works on widget-backed checkboxes hidden in a collapsed dropdown (e.g. bootstrap-multiselect) where a native `click()` can't reach them. Already-in-state boxes are left alone; a no-match is a silent no-op. |
 | `->hover($selector)` | Hover over an element. |
 | `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`...). Pass `waitForNavigation: true` when it submits a form. |
-| `->waitForSelector($selector)` | Wait until an element appears (lazy/JS content). |
+| `->waitForSelector($selector, $options = [])` | Wait until an element appears (lazy/JS content). Pass an **array** of selectors to wait for **any** of them (grouped into one comma selector), e.g. `->waitForSelector(['.results', '.no-results'])`, so the wait resolves on whichever lands first. Options: `'optional' => true` treats a timeout as a valid outcome (the element may legitimately never appear, e.g. an empty result set) so the run continues instead of failing; `'timeout' => $ms` overrides the global timeout for this one wait. |
 | `->waitForNavigation()` | Wait for a navigation to finish. |
 | `->wait($ms)` | Wait a fixed number of milliseconds. |
 | `->scroll('bottom'\|'top')` / `->scrollToBottom()` | Scroll the page (infinite scroll / lazy load). |
@@ -557,6 +557,8 @@ protected function handle(string $url): ScraperResponse
 > **`waitUntil` on navigation actions.** `visit()`, `gotoAttr()` and `reload()` accept a Puppeteer wait condition. The default `'networkidle2'` is right for most pages, but some servers keep connections open and **never reach network idle**; there `'networkidle2'` would burn the whole timeout. For those, pass `'domcontentloaded'` and rely on a following `waitForSelector()` as the real "content is ready" signal: `->visit($url, 'domcontentloaded')->waitForSelector('.results')`.
 
 If an action fails (for example a selector that never appears within the timeout), the fetch fails, which raises a `RequestException` after the retries, just like an HTTP error.
+
+> **Not every wait should be fatal.** `waitForSelector($sel, ['optional' => true])` is the escape hatch: a timeout is swallowed and the run continues, for elements that legitimately may never appear (an empty result set, an optional banner). Keep it short with `'timeout'` so an absent element does not burn the whole global timeout. To wait for whichever of several outcomes lands first (results OR a "no results" marker), pass a list: `->waitForSelector(['.results', '.no-results'])`.
 
 > **Tip:** for a click or key press that loads a new page, use `waitForNavigation: true` on that action (or `clickAndWait()`) rather than a separate `->waitForNavigation()` call. That arms the wait *before* the click, avoiding a race where the navigation finishes before the wait starts.
 
@@ -614,6 +616,8 @@ The `else` branch is optional (and rarely needed; usually you just continue the 
     delay: 1500,                                  // wait 1.5s between attempts
 )
 ```
+
+> **A failed attempt is not a failed run.** If a `repeatUntil()` body throws mid-iteration (a transient page where an expected element is missing, a `gotoAttr()` that finds no PDF this pass), that counts as one failed attempt: the loop re-checks the condition and retries on the next pass, bounded by `max`, instead of aborting the whole fetch. Only when every attempt is exhausted *and* the condition still never holds is the last error surfaced. This makes loops that navigate to a freshly regenerated page each pass (a new captcha image, a re-issued session) resilient to a single bad iteration.
 
 ### Conditions
 
