@@ -3,8 +3,10 @@
 namespace EduLazaro\Larascraper\Tests;
 
 use EduLazaro\Larascraper\Support\ScraperResponse;
+use EduLazaro\Larascraper\Tests\Support\ArrayPartsCrawler;
 use EduLazaro\Larascraper\Tests\Support\TestScraper;
 use EduLazaro\Larascraper\Tests\Support\TitleCrawler;
+use EduLazaro\Larascraper\Tests\Support\XmlItemsCrawler;
 use Illuminate\Support\Facades\Http;
 use LogicException;
 
@@ -67,6 +69,125 @@ class CrawlTest extends BaseTestCase
         $data = TitleCrawler::create(self::HTML)->parse();
 
         $this->assertSame(['title' => 'Bike shop'], $data);
+    }
+
+    public function test_run_static_entry_returns_the_same_data_as_legacy_create_parse(): void
+    {
+        // The new standard entry (Class::run) mirrors Scraper::run()/Spider::run().
+        $viaRun = TitleCrawler::run(self::HTML);
+        $viaLegacy = TitleCrawler::create(self::HTML)->parse();
+
+        $this->assertSame(['title' => 'Bike shop'], $viaRun);
+        $this->assertSame($viaLegacy, $viaRun);
+    }
+
+    public function test_filter_xml_selects_nodes_from_an_xml_string(): void
+    {
+        $xml = <<<'XML'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <feed>
+                <item><title>First</title></item>
+                <item><title>Second</title></item>
+                <item><title>Third</title></item>
+            </feed>
+            XML;
+
+        $this->assertSame(['First', 'Second', 'Third'], XmlItemsCrawler::run($xml));
+    }
+
+    public function test_raw_returns_the_exact_string_input(): void
+    {
+        $crawler = new class(self::HTML) extends \EduLazaro\Larascraper\Crawler {
+            protected function handle(): mixed
+            {
+                return $this->publicRaw();
+            }
+
+            public function publicRaw(): mixed
+            {
+                return $this->raw();
+            }
+        };
+
+        $this->assertSame(self::HTML, $crawler->publicRaw());
+    }
+
+    public function test_raw_returns_the_exact_array_input_for_multi_part_documents(): void
+    {
+        $parts = ['a' => '<x/>', 'b' => '<y/>'];
+
+        // The array flows through raw() untouched, and named parts are readable.
+        $this->assertSame(['a' => '<x/>', 'b' => '<y/>'], ArrayPartsCrawler::run($parts));
+    }
+
+    public function test_filter_on_a_non_string_input_throws_a_clear_exception(): void
+    {
+        $crawler = new class(['a' => '<x/>']) extends \EduLazaro\Larascraper\Crawler {
+            protected function handle(): mixed
+            {
+                return $this->filter('a');
+            }
+        };
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('filter() needs a string document');
+
+        $crawler->parse();
+    }
+
+    public function test_html_on_a_non_string_input_throws_a_clear_exception(): void
+    {
+        $crawler = new class(['a' => '<x/>']) extends \EduLazaro\Larascraper\Crawler {
+            protected function handle(): mixed
+            {
+                return $this->html();
+            }
+        };
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('html() needs a string document');
+
+        $crawler->parse();
+    }
+
+    public function test_filter_xml_caches_the_xml_dom_crawler_across_calls(): void
+    {
+        $xml = <<<'XML'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <feed>
+                <item><title>First</title></item>
+                <item><title>Second</title></item>
+            </feed>
+            XML;
+
+        $crawler = new class($xml) extends \EduLazaro\Larascraper\Crawler {
+            protected function handle(): mixed
+            {
+                return null;
+            }
+
+            public function filterXml(string $selector): void
+            {
+                $this->filter($selector, 'xml');
+            }
+
+            public function xmlDom(): mixed
+            {
+                return $this->xmlDom;
+            }
+        };
+
+        // Nothing built until the first xml query.
+        $this->assertNull($crawler->xmlDom());
+
+        $crawler->filterXml('item');
+        $built = $crawler->xmlDom();
+        $this->assertNotNull($built);
+
+        // A second xml query must reuse the exact same DomCrawler instance:
+        // addXmlContent runs once and the xml document is not rebuilt per call.
+        $crawler->filterXml('title');
+        $this->assertSame($built, $crawler->xmlDom());
     }
 
     public function test_selector_mode_text_returns_the_first_match(): void

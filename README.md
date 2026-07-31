@@ -188,12 +188,18 @@ protected function handle(string $url): array
 
 ## Writing a Crawler
 
-A Crawler is parsing only: it receives HTML and extracts data, with no idea how that HTML was fetched. That makes it reusable across scrapers and easy to test against a fixture.
+A Crawler is parsing only: it receives a document and extracts data, with no idea how that document was fetched. That makes it reusable across scrapers and easy to test against a fixture.
+
+The input is generic (`mixed`): an HTML string, an XML string, an arbitrary text payload, or even an array of named parts when one fetch yields more than one document.
 
 You extend `EduLazaro\Larascraper\Crawler` and implement `handle()`. Inside it you have:
 
-- **`$this->filter($cssSelector)`** returns a Symfony `DomCrawler` node list, so you can chain `->text('')`, `->attr('href')`, `->each(...)`, `->count()`, and everything DomCrawler offers.
+- **`$this->filter($cssSelector)`** returns a Symfony `DomCrawler` node list over the HTML document, so you can chain `->text('')`, `->attr('href')`, `->each(...)`, `->count()`, and everything DomCrawler offers.
+- **`$this->filter($cssSelector, 'xml')`** filters the input as **XML** instead. CSS selectors compile to XPath, so `filter('item', 'xml')` matches `<item>`, and the returned node still allows `->filterXPath()` chaining for namespaced XML.
+- **`$this->raw()`** returns the untouched input (the string, or the whole array), so you can parse it with regex, `simplexml`, `json_decode`, or read the array's parts directly.
 - **`$this->html()`** returns the full HTML of the document, if you need the raw string.
+
+`filter()` and `html()` require a string input; called on a non-string input they throw a clear `LogicException` pointing you at `raw()`.
 
 ```php
 namespace App\Scrapers\Crawlers;
@@ -236,11 +242,19 @@ class BikeCrawler extends Crawler
 
 The `crawl(BikeCrawler::class)->run()` terminal **catches** that `ScrapeException` and folds it into a `ScraperResponse` with `success = false` and `error = 'no_product'`. It does not bubble out of `run()`; the caller branches on `$result->success` (see [Handling failures](#handling-failures-requestexception)).
 
-You can drive the same Crawler against raw HTML directly, which is handy in tests:
+You can drive the same Crawler against a document directly, which is handy in tests. The standard entry is `run($input)`, consistent with `Scraper::run()` and `Spider::run()`:
 
 ```php
-$data = BikeCrawler::create($html)->parse();   // or: (new BikeCrawler($html))->parse()
+$data = BikeCrawler::run($html);   // standard entry: create + parse
+
+// XML input, filtered as XML:
+$items = FeedCrawler::run($xmlString);
+
+// Multi-part input read through raw():
+$data = SplitCrawler::run(['meta' => $metaXml, 'body' => $bodyHtml]);
 ```
+
+`create($input)->parse()` (and `(new BikeCrawler($input))->parse()`) still work: `parse()` is kept as a legacy alias of `run()`.
 
 ## The ScraperResponse
 
