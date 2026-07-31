@@ -286,6 +286,52 @@ class BuildsActionsTest extends BaseTestCase
         $this->assertSame([['type' => 'click', 'selector' => '#verify']], $actions[0]['body']);
     }
 
+    public function test_solve_captcha_defaults_to_the_ocr_solver(): void
+    {
+        // Back-compat: no 'solver' option keeps the tesseract OCR path.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->solveCaptcha('#captcha-img', '#captcha-input')
+            ->getActions();
+
+        $this->assertSame([[
+            'type' => 'solveCaptcha',
+            'imageSelector' => '#captcha-img',
+            'inputSelector' => '#captcha-input',
+            'solver' => 'ocr',
+            'options' => [],
+        ]], $actions);
+    }
+
+    public function test_solve_captcha_records_the_vision_solver_and_carries_options(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->solveCaptcha('#captcha-img', '#captcha-input', [
+                'solver' => 'vision',
+                'apiKey' => 'sk-x',
+                'model' => 'gpt-4o',
+            ])
+            ->getActions();
+
+        $this->assertSame([[
+            'type' => 'solveCaptcha',
+            'imageSelector' => '#captcha-img',
+            'inputSelector' => '#captcha-input',
+            'solver' => 'vision',
+            'options' => [
+                'solver' => 'vision',
+                'apiKey' => 'sk-x',
+                'model' => 'gpt-4o',
+            ],
+        ]], $actions);
+
+        // The options survive the JSON payload handed to scraper.cjs, so the
+        // .cjs vision branch sees apiKey/model.
+        $decoded = json_decode(json_encode($actions), true);
+        $this->assertSame('vision', $decoded[0]['solver']);
+        $this->assertSame('sk-x', $decoded[0]['options']['apiKey']);
+        $this->assertSame('gpt-4o', $decoded[0]['options']['model']);
+    }
+
     public function test_condition_factories_build_their_descriptors(): void
     {
         $this->assertSame(['type' => 'selectorExists', 'selector' => '.a'], Condition::selectorExists('.a'));

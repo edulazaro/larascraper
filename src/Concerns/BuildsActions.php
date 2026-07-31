@@ -221,15 +221,19 @@ trait BuildsActions
      * Solve a simple image (text) captcha and type the answer into an input.
      *
      * Screenshots the captcha image, reads it, and types the result into the
-     * given field. The default solver is OCR (tesseract.js + jimp), which are
-     * optional Node packages; install them with `php artisan larascraper:install
-     * --captcha`. The `solver` option is left open for future solvers (e.g.
-     * 'vision'); only 'ocr' is supported today.
+     * given field. Two solvers are supported via the 'solver' option:
+     *   'ocr' (default): tesseract.js + jimp, optional Node packages installed
+     *          with `php artisan larascraper:install --captcha`.
+     *   'vision': an OpenAI vision model, higher accuracy on distorted captchas
+     *          at the cost of an OpenAI API call per solve. Needs an API key in
+     *          the options ('apiKey') or the OPENAI_API_KEY env var; the model
+     *          defaults to 'gpt-4o-mini' (override with the 'model' option).
      *
      * @param string $imageSelector CSS selector of the captcha <img>.
      * @param string $inputSelector CSS selector of the input to type the answer into.
-     * @param array $options Solver options: 'solver' (default 'ocr'), and for OCR
-     *        'whitelist', 'psm', 'crop', 'scale', 'threshold', 'contrast', 'lang'.
+     * @param array $options Solver options: 'solver' (default 'ocr'); for OCR
+     *        'whitelist', 'psm', 'crop', 'scale', 'threshold', 'contrast', 'lang';
+     *        for vision 'apiKey', 'model', 'strip' (set false to keep punctuation).
      * @return static
      */
     public function solveCaptcha(string $imageSelector, string $inputSelector, array $options = []): static

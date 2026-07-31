@@ -311,6 +311,86 @@ async function ocrCaptcha(pngBuffer, options) {
 }
 
 /**
+ * Read a captcha image buffer with an OpenAI vision model instead of tesseract.
+ * Distorted captchas that trip up OCR are usually read in a single attempt by a
+ * vision model, at the cost of an OpenAI API call per solve. Uses node's global
+ * fetch, so no extra packages are required.
+ *
+ * The API key comes from action.options.apiKey or the OPENAI_API_KEY env var;
+ * absent either, it throws a clear error. The model defaults to 'gpt-4o-mini'.
+ */
+async function visionCaptcha(pngBuffer, options) {
+    const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        throw new Error(
+            'vision captcha solver needs an OpenAI API key via options apiKey or OPENAI_API_KEY'
+        );
+    }
+
+    const model = options.model || 'gpt-4o-mini';
+    const b64 = Buffer.from(pngBuffer).toString('base64');
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model: model,
+            max_tokens: 20,
+            temperature: 0,
+            messages: [{
+                role: 'user',
+                content: [
+                    {
+                        type: 'text',
+                        text: 'This image is a captcha. Reply with ONLY the exact characters shown, no spaces, no punctuation, no explanation.',
+                    },
+                    {
+                        type: 'image_url',
+                        image_url: { url: 'data:image/png;base64,' + b64 },
+                    },
+                ],
+            }],
+        }),
+    });
+
+    if (!resp.ok) {
+        // A rate limit (429) or a server error (5xx) is transient: return an
+        // empty answer so a surrounding repeatUntil() advances and tries the
+        // captcha again, instead of a thrown error aborting the whole scrape
+        // (repeatUntil does not catch throws). A 4xx (bad key, bad request,
+        // unknown model) is a real misconfiguration that retrying cannot fix,
+        // so surface it as an error.
+        if (resp.status === 429 || resp.status >= 500) {
+            return '';
+        }
+        const body = await resp.text().catch(() => '');
+        throw new Error(`vision captcha solver: OpenAI API returned HTTP ${resp.status} ${body}`.trim());
+    }
+
+    const data = await resp.json().catch(() => null);
+    const text = data && data.choices && data.choices[0]
+        && data.choices[0].message && data.choices[0].message.content;
+    // A missing answer (an odd response shape, a model refusal, or a captcha the
+    // model could not read) is a soft failure: return '' so repeatUntil() retries
+    // with a fresh captcha rather than aborting the whole scrape.
+    if (typeof text !== 'string') {
+        return '';
+    }
+
+    let answer = text.trim();
+    // Strip whitespace always; strip non-alphanumerics unless the caller opts out
+    // with options.strip === false (some captchas include punctuation).
+    answer = answer.replace(/\s+/g, '');
+    if (options.strip !== false) {
+        answer = answer.replace(/[^a-z0-9]/gi, '');
+    }
+    return answer;
+}
+
+/**
  * Evaluate a JS-evaluable condition (from when()/repeatUntil()) against the
  * live page. Returns a boolean. Unknown condition types throw.
  */
@@ -335,21 +415,27 @@ async function evaluateCondition(page, condition) {
 }
 
 /**
- * Solve a captcha: screenshot the image, OCR it, and type the answer into the
- * input. Dispatches by solver (only 'ocr' today; 'vision' etc. can be added
- * here without changing the PHP API).
+ * Solve a captcha: screenshot the image, read it, and type the answer into the
+ * input. Dispatches by solver: 'ocr' (default, tesseract) or 'vision' (OpenAI
+ * vision model). Both share the same screenshot + type-in flow; they differ only
+ * in how the image bytes become text. Unknown solvers throw.
  */
 async function solveCaptcha(page, action, timeout) {
-    if (action.solver !== 'ocr') {
-        throw new Error(`Unsupported captcha solver: ${action.solver}`);
-    }
-
     await page.waitForSelector(action.imageSelector, { timeout });
     const el = await page.$(action.imageSelector);
     if (!el) throw new Error(`Captcha image not found: ${action.imageSelector}`);
 
     const png = await el.screenshot();
-    const answer = await ocrCaptcha(png, action.options || {});
+    const options = action.options || {};
+
+    let answer;
+    if (action.solver === 'vision') {
+        answer = await visionCaptcha(png, options);
+    } else if (action.solver === 'ocr') {
+        answer = await ocrCaptcha(png, options);
+    } else {
+        throw new Error(`Unsupported captcha solver: ${action.solver}`);
+    }
 
     await page.waitForSelector(action.inputSelector, { timeout });
     await page.$eval(action.inputSelector, (input) => { input.value = ''; });

@@ -633,7 +633,26 @@ protected function handle(string $url): ScraperResponse
 }
 ```
 
-Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captcha is accepted (see above). The `solver` option is reserved for future solvers (e.g. `'vision'`); only `'ocr'` is supported today.
+Because OCR isn't perfect, pair it with `repeatUntil()` to retry until the captcha is accepted (see above).
+
+### OpenAI vision solver
+
+Distorted captchas that tesseract struggles with are usually read in a single attempt by an OpenAI vision model. Set `'solver' => 'vision'` to screenshot the captcha and send it to OpenAI instead of running OCR. It needs no extra Node packages (it uses `fetch`), but each solve is an OpenAI API call (per-call cost). The API key comes from the `'apiKey'` option or the `OPENAI_API_KEY` env var; the model defaults to `gpt-4o-mini`:
+
+```php
+return $this->scrape($url)
+    ->solveCaptcha('#captcha-img', '#captcha-input', [
+        'solver' => 'vision',
+        'apiKey' => '...',            // or set OPENAI_API_KEY in the environment
+        'model'  => 'gpt-4o-mini',    // default; any vision-capable model works
+        // 'strip' => false,          // keep punctuation in the answer (default strips it)
+    ])
+    ->clickAndWait('#submit')
+    ->crawl(ResultCrawler::class)
+    ->run();
+```
+
+The default solver stays `'ocr'` (tesseract); `'vision'` is opt-in per call. A transient OpenAI error (a `429` rate limit or a `5xx` server error) yields an empty answer rather than throwing, so a surrounding `repeatUntil()` simply retries the captcha; a bad key or a `4xx` request surfaces as an error.
 
 > **Scope:** this handles captchas where you read text and type it. It does **not** solve reCAPTCHA/hCaptcha image grids; those need a different approach.
 
