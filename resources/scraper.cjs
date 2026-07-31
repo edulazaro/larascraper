@@ -275,10 +275,10 @@ async function ocrCaptcha(pngBuffer, options) {
         ({ Jimp } = require('jimp'));
         ({ createWorker } = require('tesseract.js'));
     } catch (e) {
-        throw new Error(
+        throw Object.assign(new Error(
             'solveCaptcha needs the OCR packages. Install them with: ' +
             'php artisan larascraper:install --captcha (or npm install tesseract.js jimp)'
-        );
+        ), { fatal: true });
     }
 
     const crop = options.crop ?? 7;
@@ -322,9 +322,9 @@ async function ocrCaptcha(pngBuffer, options) {
 async function visionCaptcha(pngBuffer, options) {
     const apiKey = options.apiKey || process.env.OPENAI_API_KEY;
     if (!apiKey) {
-        throw new Error(
+        throw Object.assign(new Error(
             'vision captcha solver needs an OpenAI API key via options apiKey or OPENAI_API_KEY'
-        );
+        ), { fatal: true });
     }
 
     const model = options.model || 'gpt-4o-mini';
@@ -359,15 +359,18 @@ async function visionCaptcha(pngBuffer, options) {
     if (!resp.ok) {
         // A rate limit (429) or a server error (5xx) is transient: return an
         // empty answer so a surrounding repeatUntil() advances and tries the
-        // captcha again, instead of a thrown error aborting the whole scrape
-        // (repeatUntil does not catch throws). A 4xx (bad key, bad request,
-        // unknown model) is a real misconfiguration that retrying cannot fix,
-        // so surface it as an error.
+        // captcha again, instead of a thrown error aborting the whole scrape. A
+        // 4xx (bad key, bad request, unknown model) is a real misconfiguration
+        // that retrying cannot fix, so surface it as a FATAL error that a
+        // surrounding repeatUntil() will not swallow or retry.
         if (resp.status === 429 || resp.status >= 500) {
             return '';
         }
         const body = await resp.text().catch(() => '');
-        throw new Error(`vision captcha solver: OpenAI API returned HTTP ${resp.status} ${body}`.trim());
+        throw Object.assign(
+            new Error(`vision captcha solver: OpenAI API returned HTTP ${resp.status} ${body}`.trim()),
+            { fatal: true }
+        );
     }
 
     const data = await resp.json().catch(() => null);
@@ -410,7 +413,7 @@ async function evaluateCondition(page, condition) {
         case 'captured':
             return capture.done;
         default:
-            throw new Error(`Unknown condition type: ${condition.type}`);
+            throw Object.assign(new Error(`Unknown condition type: ${condition.type}`), { fatal: true });
     }
 }
 
@@ -434,7 +437,7 @@ async function solveCaptcha(page, action, timeout) {
     } else if (action.solver === 'ocr') {
         answer = await ocrCaptcha(png, options);
     } else {
-        throw new Error(`Unsupported captcha solver: ${action.solver}`);
+        throw Object.assign(new Error(`Unsupported captcha solver: ${action.solver}`), { fatal: true });
     }
 
     await page.waitForSelector(action.inputSelector, { timeout });
@@ -477,14 +480,28 @@ async function runActions(page, actions, timeout) {
                         await runActions(page, action.body, timeout);
                         lastError = null;
                     } catch (e) {
+                        // A fatal error is a caller/config mistake (unknown solver
+                        // or condition type, a 4xx from the captcha solver) that
+                        // retrying cannot fix: abort immediately rather than burn
+                        // `max` attempts or swallow it. Anything else is a
+                        // transient page failure: count it as one failed attempt
+                        // and let the loop retry on the next pass.
+                        if (e && e.fatal) throw e;
                         lastError = e;
                     }
                     if (delay > 0 && i < max - 1) {
                         await new Promise(resolve => setTimeout(resolve, delay));
                     }
                 }
-                if (lastError && !(await evaluateCondition(page, action.condition))) {
-                    throw lastError;
+                // Surface the last transient error only if every attempt was
+                // exhausted without the condition ever holding. The final check
+                // can itself throw (e.g. an execution context torn down by an
+                // in-flight navigation); if so, fall back to the real lastError.
+                if (lastError) {
+                    let met = false;
+                    try { met = await evaluateCondition(page, action.condition); }
+                    catch (e) { met = false; }
+                    if (!met) throw lastError;
                 }
                 break;
             }
@@ -566,15 +583,20 @@ async function runActions(page, actions, timeout) {
                 }
                 break;
             case 'waitForSelector': {
-                // A per-action `timeout` overrides the global one; `optional`
-                // makes a timeout a valid outcome (the element may legitimately
-                // never appear, e.g. an empty result set) so the run continues
-                // instead of failing.
-                const waitOpts = { timeout: action.timeout ?? timeout };
+                // A per-action `timeout` overrides the global one; a falsy value
+                // (0 or unset) falls back to the global, so `timeout: 0` can
+                // never become Puppeteer's "wait forever". `optional` makes a
+                // genuine TIMEOUT a valid outcome (the element may legitimately
+                // never appear, e.g. an empty result set) so the run continues;
+                // any other error (an invalid selector, etc.) still surfaces
+                // instead of being silently swallowed.
+                const waitOpts = { timeout: action.timeout || timeout };
                 if (action.optional) {
                     try {
                         await page.waitForSelector(action.selector, waitOpts);
-                    } catch (e) { /* optional wait timed out: continue */ }
+                    } catch (e) {
+                        if (e && e.name !== 'TimeoutError') throw e;
+                    }
                 } else {
                     await page.waitForSelector(action.selector, waitOpts);
                 }
@@ -614,7 +636,7 @@ async function runActions(page, actions, timeout) {
                 break;
             }
             default:
-                throw new Error(`Unknown action type: ${action.type}`);
+                throw Object.assign(new Error(`Unknown action type: ${action.type}`), { fatal: true });
         }
     }
 }

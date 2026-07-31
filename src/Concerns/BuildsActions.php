@@ -193,9 +193,19 @@ trait BuildsActions
      */
     public function waitForSelector(string|array $selector, array $options = []): static
     {
-        $selector = is_array($selector)
-            ? implode(', ', array_map(static fn ($s): string => (string) $s, $selector))
-            : $selector;
+        if (is_array($selector)) {
+            $parts = array_values(array_filter(
+                array_map(static fn ($s): string => trim((string) $s), $selector),
+                static fn (string $s): bool => $s !== ''
+            ));
+            $selector = implode(', ', $parts);
+        }
+
+        if (trim($selector) === '') {
+            throw new \InvalidArgumentException(
+                'waitForSelector() needs a non-empty CSS selector (or a list with at least one non-empty selector).'
+            );
+        }
 
         $action = ['type' => 'waitForSelector', 'selector' => $selector];
 

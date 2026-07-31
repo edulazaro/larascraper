@@ -292,6 +292,28 @@ class BuildsActionsTest extends BaseTestCase
         $this->assertArrayNotHasKey('timeout', $actions[0]);
     }
 
+    public function test_wait_for_selector_drops_empty_elements_from_a_list(): void
+    {
+        // Null/blank entries are filtered before the comma join, so a
+        // dynamically built list never yields a stray leading/trailing comma.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector(['', '.foo', null])
+            ->getActions();
+
+        $this->assertSame('.foo', $actions[0]['selector']);
+    }
+
+    public function test_wait_for_selector_rejects_an_empty_selector(): void
+    {
+        // An empty string or an all-blank list would serialize to '' and blow up
+        // at browser runtime; fail fast at build time instead.
+        $this->expectException(\InvalidArgumentException::class);
+
+        TestScraper::make()->scrape('https://example.com')
+            ->waitForSelector([])
+            ->getActions();
+    }
+
     public function test_when_builds_a_conditional_action_with_then_and_else(): void
     {
         $actions = TestScraper::make()->scrape('https://example.com')
