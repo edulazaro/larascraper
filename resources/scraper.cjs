@@ -9,7 +9,7 @@ puppeteer.use(StealthPlugin());
 
 // Resolve a Chrome binary to launch. Puppeteer pins ONE exact build and aborts
 // with "Could not find Chrome (ver. X)" when the cached binary is a different
-// version — which happens on every puppeteer bump, since the cached Chrome is
+// version, which happens on every puppeteer bump, since the cached Chrome is
 // installed separately and does not update in lockstep. To stay resilient across
 // that drift, point puppeteer at whatever Chrome is actually present in its cache,
 // choosing the NEWEST version. An explicit PUPPETEER_EXECUTABLE_PATH always wins;
@@ -432,6 +432,24 @@ async function runActions(page, actions, timeout) {
                     el.dispatchEvent(new Event('change', { bubbles: true }));
                 }, action.value ?? '');
                 break;
+            case 'check':
+            case 'uncheck': {
+                // Tick/untick checkboxes by setting .checked and firing a
+                // bubbling 'change'; reaches widget-backed checkboxes (e.g.
+                // bootstrap-multiselect) that are hidden in a collapsed dropdown,
+                // where a native click() can't. querySelectorAll handles multiple
+                // matches; a no-match is a silent no-op.
+                const want = action.type === 'check';
+                await page.evaluate((sel, wantChecked) => {
+                    document.querySelectorAll(sel).forEach(cb => {
+                        if (cb.checked !== wantChecked) {
+                            cb.checked = wantChecked;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    });
+                }, action.selector, want);
+                break;
+            }
             case 'hover':
                 await page.waitForSelector(action.selector, { timeout });
                 await page.hover(action.selector);

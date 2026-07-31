@@ -529,6 +529,7 @@ protected function handle(string $url): ScraperResponse
 | `->type($selector, $text)` | Type text into an input (waits for it first). |
 | `->select($selector, $value)` | Choose an option (by value) in a `<select>`. Pass an **array** of values to select several at once on a `<select multiple>`, e.g. `->select('#organo', ['11', '12', '13'])`; they are applied in a single call so earlier values are not deselected. A string selects one option. |
 | `->setValue($selector, $value)` | Set an element's value directly, firing `input` + `change` events. For hidden inputs populated by a custom widget (multiselects backed by an `<input type="hidden">`), or fields `type()`/`select()` can't reach. |
+| `->check($selector)` / `->uncheck($selector)` | Tick / untick every matching checkbox, firing a bubbling `change` event. Works on widget-backed checkboxes hidden in a collapsed dropdown (e.g. bootstrap-multiselect) where a native `click()` can't reach them. Already-in-state boxes are left alone; a no-match is a silent no-op. |
 | `->hover($selector)` | Hover over an element. |
 | `->press($key)` | Press a key (`Enter`, `Tab`, `Escape`...). Pass `waitForNavigation: true` when it submits a form. |
 | `->waitForSelector($selector)` | Wait until an element appears (lazy/JS content). |

@@ -199,6 +199,50 @@ class BuildsActionsTest extends BaseTestCase
         $this->assertSame('11', $actions[0]['value']);
     }
 
+    public function test_check_builds_the_expected_action(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->check('#filters input[type=checkbox]')
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'check', 'selector' => '#filters input[type=checkbox]']],
+            $actions
+        );
+    }
+
+    public function test_uncheck_builds_the_expected_action(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->uncheck('#filters input[type=checkbox]')
+            ->getActions();
+
+        $this->assertSame(
+            [['type' => 'uncheck', 'selector' => '#filters input[type=checkbox]']],
+            $actions
+        );
+    }
+
+    public function test_check_and_uncheck_survive_the_json_payload_to_node(): void
+    {
+        // The runner json_encode()s the actions before handing them to
+        // scraper.cjs; assert both descriptors carry their selector over the wire.
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->check('#a')
+            ->uncheck('#b')
+            ->getActions();
+
+        $decoded = json_decode(json_encode($actions), true);
+
+        $this->assertSame(
+            [
+                ['type' => 'check', 'selector' => '#a'],
+                ['type' => 'uncheck', 'selector' => '#b'],
+            ],
+            $decoded
+        );
+    }
+
     public function test_when_builds_a_conditional_action_with_then_and_else(): void
     {
         $actions = TestScraper::make()->scrape('https://example.com')

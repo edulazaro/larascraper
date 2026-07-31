@@ -23,8 +23,8 @@ use LogicException;
  * A scraper is the orchestration layer. It no longer holds the HTML, the
  * crawler or the fetched file: those belong to a per-request FetchBuilder,
  * created with `$this->scrape($url)`, that carries the browser actions and
- * performs the fetch. What lives here is the strategy — how many retries, which
- * driver, proxy, headers — held as properties and seeded into every FetchBuilder
+ * performs the fetch. What lives here is the strategy: how many retries, which
+ * driver, proxy, headers, held as properties and seeded into every FetchBuilder
  * through fetchDefaults().
  *
  * Two external entry points reach the same instance machinery:
@@ -272,7 +272,7 @@ abstract class Scraper
 
         // The single-parameter "bag": forward the array whole as the sole argument, but
         // ONLY when that parameter actually accepts an array (typed `array`/`iterable`/
-        // `mixed`, or untyped). For a concrete typed param — e.g. handle(File $file) — a
+        // `mixed`, or untyped). For a concrete typed param (e.g. handle(File $file)) a
         // single array is NOT a bag: it falls through to the name/position mapping below,
         // so callHandle(['file' => $file]) binds $file = $file instead of the whole array.
         $singleArrayBag = false;
@@ -281,8 +281,8 @@ abstract class Scraper
             && is_array($params[0])
             && count($refParams) === 1
         ) {
-            // The param "accepts the array bag" if it is untyped, or its type is — or, for a
-            // union, includes — array/iterable/mixed. A concrete object/scalar type is NOT a
+            // The param "accepts the array bag" if it is untyped, or its type is (or, for a
+            // union, includes) array/iterable/mixed. A concrete object/scalar type is NOT a
             // bag, so its array is mapped by name/position below.
             $bagType = $refParams[0]->getType();
             $candidateTypes = $bagType instanceof ReflectionUnionType ? $bagType->getTypes() : [$bagType];

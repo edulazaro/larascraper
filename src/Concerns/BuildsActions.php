@@ -110,6 +110,40 @@ trait BuildsActions
     }
 
     /**
+     * Tick every checkbox matching the CSS selector, firing a bubbling 'change'
+     * event so JS widgets react.
+     *
+     * Sets `.checked = true` on each match and dispatches 'change', the pattern
+     * multiselect widgets (e.g. bootstrap-multiselect) rely on, where the real
+     * checkboxes live hidden inside a collapsed dropdown that a native click()
+     * cannot reach. Already-ticked boxes are left untouched (no spurious event).
+     * Uses querySelectorAll, so it handles multiple matches; a no-match is a
+     * silent no-op.
+     */
+    public function check(string $selector): static
+    {
+        $this->actions[] = ['type' => 'check', 'selector' => $selector];
+        return $this;
+    }
+
+    /**
+     * Untick every checkbox matching the CSS selector, firing a bubbling 'change'
+     * event so JS widgets react.
+     *
+     * The inverse of check(): sets `.checked = false` on each match and dispatches
+     * 'change'. For widget-backed multiselects (e.g. bootstrap-multiselect) whose
+     * checkboxes are hidden in a collapsed dropdown a native click() cannot reach.
+     * Already-unticked boxes are left untouched (no spurious event). Uses
+     * querySelectorAll, so it handles multiple matches; a no-match is a silent
+     * no-op.
+     */
+    public function uncheck(string $selector): static
+    {
+        $this->actions[] = ['type' => 'uncheck', 'selector' => $selector];
+        return $this;
+    }
+
+    /**
      * Hover over an element matching the CSS selector.
      */
     public function hover(string $selector): static
@@ -291,7 +325,7 @@ trait BuildsActions
      *
      * Reads `attr` from the first element matching `selector`, resolves it
      * against the current page URL, and navigates there. Useful when the next
-     * page's URL lives in an attribute rather than a clickable link — e.g. an
+     * page's URL lives in an attribute rather than a clickable link, e.g. an
      * `<object data="...">` / `<embed src="...">` PDF viewer.
      *
      * @param string $selector CSS selector of the element holding the URL.
@@ -317,7 +351,7 @@ trait BuildsActions
      * Reload the current page.
      *
      * Handy inside repeatUntil() loops where each attempt needs a freshly
-     * regenerated page — e.g. requesting a new captcha image before solving it.
+     * regenerated page, e.g. requesting a new captcha image before solving it.
      *
      * @param string $waitUntil Puppeteer navigation wait condition (default
      *        'networkidle2'; use 'domcontentloaded' for never-idle sites).
@@ -333,7 +367,7 @@ trait BuildsActions
     /**
      * Navigate to an absolute or relative URL.
      *
-     * Like the initial scrape URL, but as a mid-flow action — e.g. returning to
+     * Like the initial scrape URL, but as a mid-flow action, e.g. returning to
      * a viewer page at the start of each repeatUntil() iteration so the next
      * step (gotoAttr/captcha) starts from a fresh server state.
      *
