@@ -3,8 +3,11 @@
 # Larascraper - A Simple Scraper for Laravel
 
 <p align="center">
-    <a href="https://packagist.org/packages/edulazaro/larascraper"><img src="https://img.shields.io/packagist/dt/edulazaro/larascraper" alt="Total Downloads"></a>
+    <a href="https://github.com/edulazaro/larascraper/actions/workflows/tests.yml"><img src="https://github.com/edulazaro/larascraper/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
     <a href="https://packagist.org/packages/edulazaro/larascraper"><img src="https://img.shields.io/packagist/v/edulazaro/larascraper" alt="Latest Stable Version"></a>
+    <a href="https://packagist.org/packages/edulazaro/larascraper"><img src="https://img.shields.io/packagist/dt/edulazaro/larascraper" alt="Total Downloads"></a>
+    <a href="https://packagist.org/packages/edulazaro/larascraper"><img src="https://img.shields.io/packagist/php-v/edulazaro/larascraper" alt="PHP Version"></a>
+    <a href="https://github.com/edulazaro/larascraper/blob/main/LICENSE.md"><img src="https://img.shields.io/packagist/l/edulazaro/larascraper" alt="License"></a>
 </p>
 
 ## Introduction
