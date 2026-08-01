@@ -14,7 +14,7 @@
 
 Larascraper splits fetching from parsing: a Scraper orchestrates the request, a Crawler turns the document into data, and a Spider drives many of them concurrently over a whole source. Two drivers, a browser one built on Puppeteer for pages that need JavaScript or interaction, and a plain HTTP one for everything else.
 
-Larascraper is the scraping layer behind crowd.legal, where it scrapes official state gazettes worldwide and reads the judicial documentation centre (CENDOJ): captcha-gated PDF viewers, scanned rulings with no text layer, and search forms that may or may not return results. Released under MIT.
+Larascraper is the scraping layer behind crowd.legal, where it scrapes official state gazettes worldwide: captcha-gated PDF viewers, scanned documents with no text layer, and search forms that may or may not return results. Released under MIT.
 
 ## Quick start
 
