@@ -12,14 +12,47 @@
 
 ## Introduction
 
-Larascraper lets you scrape any URL from Laravel. It uses Puppeteer under the hood but focuses on simplicity: unlike Spatie Crawler or Browsershot, which can leave many Chromium instances open and fill your server memory, Larascraper drives the scrape through Node and makes sure the Chromium instance is closed before exiting.
+Larascraper splits fetching from parsing: a Scraper orchestrates the request, a Crawler turns the document into data, and a Spider drives many of them concurrently over a whole source. Two drivers, a browser one built on Puppeteer for pages that need JavaScript or interaction, and a plain HTTP one for everything else.
 
-Unlike Spatie Crawler, it also supports proxy authentication and is generally faster.
+Larascraper is the scraping layer behind crowd.legal, where it scrapes official state gazettes worldwide and reads the judicial documentation centre (CENDOJ): captcha-gated PDF viewers, scanned rulings with no text layer, and search forms that may or may not return results. Released under MIT.
 
-The design splits fetching from parsing. A **Scraper** orchestrates the request (retries, proxy, browser actions) and decides whether the scrape succeeded by looking at the content; a **Crawler** parses the HTML into data; and `run()` hands you back a small `ScraperResponse`. HTTP 200 is not the same as "the scrape worked" (a 200 can be a captcha or a "no results" page), so success is content based and lives in the scraper, not in the HTTP status.
+## Quick start
+
+```bash
+composer require edulazaro/larascraper
+php artisan make:scraper TitleScraper
+```
+
+```php
+// app/Scrapers/TitleScraper.php
+class TitleScraper extends Scraper
+{
+    protected function handle(string $url): array
+    {
+        return $this->scrape($url)
+            ->crawl('h1')     // a CSS selector (or a Crawler class)
+            ->texts();        // string[] of every match
+    }
+}
+```
+
+```php
+$titles = TitleScraper::run('https://example.com')->data;   // string[]
+```
+
+That is the whole loop: a Scraper to fetch, a Crawler to parse, a `ScraperResponse` to read. Everything below — Spiders, captchas, PDFs, Fibers — builds on it.
+
+## Requirements
+
+- PHP `8.2`, `8.3`, `8.4` and `8.5`
+- Laravel `10`, `11`, `12` and `13`
+
+Every combination of those is covered by the test suite on each push, and once a week so a new release that breaks the package shows up here first.
 
 ## Contents
 
+- [Quick start](#quick-start)
+- [Requirements](#requirements)
 - [Install](#install)
 - [Drivers (browser vs HTTP)](#drivers-browser-vs-http)
 - [Basic Usage](#basic-usage)
