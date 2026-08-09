@@ -246,7 +246,11 @@ class FetchBuilder
      */
     protected function resolveProxy(): array
     {
-        if ($this->proxy) {
+        // Anything set explicitly wins, credentials included. They are meaningful
+        // on their own: HttpRunner::authenticate() sends them as basic auth to the
+        // target site rather than to a proxy, so a scraper may set user and pass
+        // with no address at all. Falling through to the pool here would drop them.
+        if ($this->proxy || $this->proxyUser || $this->proxyPass) {
             return ['url' => $this->proxy, 'user' => $this->proxyUser, 'pass' => $this->proxyPass];
         }
 
@@ -286,8 +290,15 @@ class FetchBuilder
 
         $parts = parse_url($proxy);
 
+        // Without a scheme, parse_url misreads credentials: 'user:pass@host:port'
+        // comes back as scheme "user" plus a path. Prefixing '//' makes it parse
+        // the string as an authority, which is what it actually is.
+        if ((! is_array($parts) || ! isset($parts['user'])) && str_contains($proxy, '@')) {
+            $parts = parse_url('//' . $proxy) ?: $parts;
+        }
+
         // Unparseable, or nothing to strip: hand it over untouched.
-        if ($parts === false || ! isset($parts['user'])) {
+        if (! is_array($parts) || ! isset($parts['user'])) {
             return ['url' => $proxy, 'user' => null, 'pass' => null];
         }
 
