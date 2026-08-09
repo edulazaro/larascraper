@@ -236,6 +236,75 @@ class FetchBuilder
     }
 
     /**
+     * Decide which proxy this request goes through.
+     *
+     * An explicit ->proxy() always wins. Otherwise a random entry from
+     * config('larascraper.proxies') is used, so a site that blocks one address
+     * does not block every scrape.
+     *
+     * @return array{url: ?string, user: ?string, pass: ?string}
+     */
+    protected function resolveProxy(): array
+    {
+        if ($this->proxy) {
+            return ['url' => $this->proxy, 'user' => $this->proxyUser, 'pass' => $this->proxyPass];
+        }
+
+        $proxies = function_exists('config') ? (array) config('larascraper.proxies', []) : [];
+        $proxies = array_values(array_filter($proxies));
+
+        if ($proxies === []) {
+            return ['url' => null, 'user' => null, 'pass' => null];
+        }
+
+        return static::normalizeProxy($proxies[array_rand($proxies)]);
+    }
+
+    /**
+     * Accept both spellings of a configured proxy and return its parts.
+     *
+     * A string may carry credentials inline ('http://user:pass@host:port'); an
+     * array spells them out (['url' => ..., 'user' => ..., 'pass' => ...]).
+     *
+     * Inline credentials are stripped from the URL rather than passed through:
+     * Chrome ignores them in --proxy-server, so PuppeteerRunner needs them
+     * separately for page.authenticate(). Everything else keeps working because
+     * both runners already take user and pass apart from the address.
+     *
+     * @param  string|array<string, string|null> $proxy
+     * @return array{url: ?string, user: ?string, pass: ?string}
+     */
+    public static function normalizeProxy(string|array $proxy): array
+    {
+        if (is_array($proxy)) {
+            return [
+                'url' => $proxy['url'] ?? null,
+                'user' => $proxy['user'] ?? null,
+                'pass' => $proxy['pass'] ?? null,
+            ];
+        }
+
+        $parts = parse_url($proxy);
+
+        // Unparseable, or nothing to strip: hand it over untouched.
+        if ($parts === false || ! isset($parts['user'])) {
+            return ['url' => $proxy, 'user' => null, 'pass' => null];
+        }
+
+        // Rebuild the address without credentials, keeping the scheme only if
+        // it was there ('host:port' must not become 'http://host:port').
+        $url = isset($parts['scheme']) ? $parts['scheme'] . '://' : '';
+        $url .= $parts['host'] ?? '';
+        $url .= isset($parts['port']) ? ':' . $parts['port'] : '';
+
+        return [
+            'url' => $url,
+            'user' => rawurldecode($parts['user']),
+            'pass' => isset($parts['pass']) ? rawurldecode($parts['pass']) : null,
+        ];
+    }
+
+    /**
      * Set retry attempts and delay.
      *
      * @param int $attempts The number of attempts before giving up.
@@ -353,12 +422,14 @@ class FetchBuilder
 
         $runner->cookies($this->cookies, $this->cookieDomain);
 
-        if ($this->proxy) {
-            $runner->proxy($this->proxy);
+        $proxy = $this->resolveProxy();
+
+        if ($proxy['url']) {
+            $runner->proxy($proxy['url']);
         }
 
-        if ($this->proxyUser && $this->proxyPass) {
-            $runner->authenticate($this->proxyUser, $this->proxyPass);
+        if ($proxy['user'] && $proxy['pass']) {
+            $runner->authenticate($proxy['user'], $proxy['pass']);
         }
 
         $attempt = 0;

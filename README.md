@@ -470,6 +470,34 @@ With or without authentication:
 
 The class-property equivalent is `$proxy`, `$proxyUser` and `$proxyPass`.
 
+#### A pool of proxies
+
+Publish the config file and list several. A random one is picked per request, so
+a site that blocks one address does not block every scrape:
+
+```bash
+php artisan vendor:publish --tag=larascraper-config
+```
+
+```php
+// config/larascraper.php
+'proxies' => [
+    '203.0.113.10:8080',
+    'http://user:secret@203.0.113.11:8080',
+    'socks5://203.0.113.12:1080',
+    ['url' => '203.0.113.13:8080', 'user' => 'user', 'pass' => 'secret'],
+],
+```
+
+Entries may be plain strings or arrays, whichever reads better — mix them freely.
+Credentials written inline are split out of the URL before use, because Chrome
+ignores them in `--proxy-server` and the browser runner has to pass them to
+`page.authenticate()` instead. Special characters in credentials should be
+percent-encoded (`p:w` → `p%3Aw`).
+
+An explicit `->proxy()` call, or the `$proxy` class property, always wins over
+the list. Leave `proxies` empty to keep the previous behaviour.
+
 ### Timeout
 
 Milliseconds; 20000 by default:
