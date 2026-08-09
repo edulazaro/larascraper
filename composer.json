@@ -8,6 +8,9 @@
         "laravel/framework": ">=10.0",
         "symfony/dom-crawler": "^7.2"
     },
+    "scripts": {
+      "test": "vendor/bin/phpunit"
+    },
     "suggest": {
         "guzzlehttp/guzzle": "Required only for the lightweight 'http' driver (->driver('http')), which scrapes via a plain HTTP request instead of a headless browser.",
         "ext-ghostscript": "System package ghostscript (the 'gs' binary): default engine for CapturedFile->text() (PDF text layer). Install via your OS, e.g. apt-get install ghostscript. Composer cannot install it.",
