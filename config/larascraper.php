@@ -33,4 +33,30 @@ return [
         //
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Throttling
+    |--------------------------------------------------------------------------
+    |
+    | Pacing and proxy lockout, per THROTTLE KEY. A scraper declares its key with
+    | the $throttleKey property; without one it uses the host of the URL it is
+    | fetching. Keys are deliberately not hosts: one domain can serve a listing
+    | happily while refusing a download endpoint, and a lockout earned by one
+    | should not stop the other. Scrapers that should share a budget share a key.
+    |
+    |   'cendoj.search' => [
+    |       'interval'  => 10,    // seconds between requests, across all processes
+    |       'lock_base' => 120,   // first lockout after a proxy is refused
+    |       'lock_max'  => 3600,  // ceiling; each further refusal doubles the wait
+    |   ],
+    |
+    | Keys with no entry here are not throttled at all and never touch the cache,
+    | so this costs nothing until you ask for it.
+    |
+    */
+
+    'throttle' => [
+        //
+    ],
+
 ];

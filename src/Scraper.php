@@ -72,6 +72,13 @@ abstract class Scraper
     /** @var string|null Proxy server (IP:PORT or full URL), or null. */
     protected ?string $proxy = null;
 
+    /**
+     * @var string|null Groups this scraper's requests for pacing and proxy lockout
+     *                  (see config/larascraper.php -> throttle). Scrapers sharing a
+     *                  key share a budget; null falls back to the URL host.
+     */
+    protected ?string $throttleKey = null;
+
     /** @var string|null Proxy username, or null. */
     protected ?string $proxyUser = null;
 
@@ -391,6 +398,7 @@ abstract class Scraper
             'timeout' => $this->timeout,
             'headers' => $this->headers,
             'proxy' => $this->proxy,
+            'throttleKey' => $this->throttleKey,
             'proxyUser' => $this->proxyUser,
             'proxyPass' => $this->proxyPass,
             'maxRetries' => $this->tries,

@@ -89,6 +89,12 @@ class FetchBuilder
     /** @var Session|null A shared cookie jar threaded across a crawl, or null. */
     protected ?Session $session;
 
+    /**
+     * @var string|null Throttle key: pacing and proxy lockout are scoped to it.
+     *                  Null falls back to the host of the URL being fetched.
+     */
+    protected ?string $throttleKey;
+
     /** @var RequestResponse|null The memoized fetch result (idempotency). */
     protected ?RequestResponse $fetched = null;
 
@@ -107,6 +113,7 @@ class FetchBuilder
         $this->timeout = $defaults['timeout'] ?? 20000;
         $this->headers = $defaults['headers'] ?? [];
         $this->proxy = $defaults['proxy'] ?? null;
+        $this->throttleKey = $defaults['throttleKey'] ?? null;
         $this->proxyUser = $defaults['proxyUser'] ?? null;
         $this->proxyPass = $defaults['proxyPass'] ?? null;
         $this->maxRetries = $defaults['maxRetries'] ?? 3;
@@ -236,15 +243,39 @@ class FetchBuilder
     }
 
     /**
+     * Whether any configured proxy is free to try against this target.
+     *
+     * Asked right after a refusal, to decide whether retrying is worth anything:
+     * with every exit locked out there is nowhere left to go, and hammering the
+     * same address is exactly what earned the block.
+     */
+    protected function hasHealthyProxy(Throttle $throttle): bool
+    {
+        $proxies = function_exists('config') ? (array) config('larascraper.proxies', []) : [];
+
+        foreach (array_filter($proxies) as $proxy) {
+            $parts = static::normalizeProxy($proxy);
+
+            if ($throttle->available($parts['url'] ?? Throttle::DIRECT)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Decide which proxy this request goes through.
      *
      * An explicit ->proxy() always wins. Otherwise a random entry from
      * config('larascraper.proxies') is used, so a site that blocks one address
-     * does not block every scrape.
+     * does not block every scrape. Given a throttle, addresses the target has
+     * recently refused are left out of the draw.
      *
+     * @param  Throttle|null $throttle Lockout state for this target, if throttled.
      * @return array{url: ?string, user: ?string, pass: ?string}
      */
-    protected function resolveProxy(): array
+    protected function resolveProxy(?Throttle $throttle = null): array
     {
         // Anything set explicitly wins, credentials included. They are meaningful
         // on their own: HttpRunner::authenticate() sends them as basic auth to the
@@ -255,13 +286,25 @@ class FetchBuilder
         }
 
         $proxies = function_exists('config') ? (array) config('larascraper.proxies', []) : [];
-        $proxies = array_values(array_filter($proxies));
+        $proxies = array_map([static::class, 'normalizeProxy'], array_values(array_filter($proxies)));
+
+        // Skip whatever the target has recently refused. Only when every proxy is
+        // locked out does the pool fall back to the full list: a stale lockout is a
+        // better bet than not trying at all.
+        if ($throttle !== null) {
+            $healthy = array_values(array_filter(
+                $proxies,
+                static fn ($p) => $throttle->available($p['url'] ?? Throttle::DIRECT),
+            ));
+
+            $proxies = $healthy !== [] ? $healthy : $proxies;
+        }
 
         if ($proxies === []) {
             return ['url' => null, 'user' => null, 'pass' => null];
         }
 
-        return static::normalizeProxy($proxies[array_rand($proxies)]);
+        return $proxies[array_rand($proxies)];
     }
 
     /**
@@ -433,34 +476,59 @@ class FetchBuilder
 
         $runner->cookies($this->cookies, $this->cookieDomain);
 
-        $proxy = $this->resolveProxy();
-
-        if ($proxy['url']) {
-            $runner->proxy($proxy['url']);
-        }
-
-        if ($proxy['user'] && $proxy['pass']) {
-            $runner->authenticate($proxy['user'], $proxy['pass']);
-        }
+        $throttle = new Throttle($this->throttleKey ?? $host);
 
         $attempt = 0;
         $response = [];
 
         while (++$attempt <= $this->maxRetries) {
+            // The exit is chosen per attempt, not once: a proxy the target has just
+            // refused is skipped on the next try, which is the whole point of keeping
+            // more than one. The runner is reused, so both are re-applied every time
+            // — an empty string clears a proxy the previous attempt had set.
+            $proxy = $this->resolveProxy($throttle);
+            $label = $proxy['url'] ?? Throttle::DIRECT;
+
+            $runner->proxy((string) ($proxy['url'] ?? ''));
+
+            // Cleared explicitly when the chosen exit has none: otherwise a retry
+            // through an open proxy would still carry the previous one's credentials.
+            $runner->authenticate((string) ($proxy['user'] ?? ''), (string) ($proxy['pass'] ?? ''));
+
+            // Wait our turn against this target, however many processes are asking.
+            $throttle->pace();
+
             $this->log("GETTING: {$this->url} (Attempt #{$attempt})");
 
             try {
                 $response = $runner->run();
 
                 if ($response['success'] ?? false) {
+                    // This exit works: forget any lockout it was carrying.
+                    $throttle->succeeded($label);
                     break;
                 }
 
                 $status = $response['status'] ?? 0;
                 $this->log("Error getting {$this->url} on attempt #{$attempt}: {$status}");
 
+                // A refusal is about the address, not the request: lock this exit out
+                // of this target for a while (longer each time) and let the next
+                // attempt go through another one.
+                $refused = in_array($status, [403, 429], true);
+
+                if ($refused) {
+                    $seconds = $throttle->lockOut($label);
+                    $this->log("Locked out {$label} for {$seconds}s after {$status}");
+                }
+
                 // Only retriable statuses get another attempt; the rest break out.
-                if (!in_array($status, [408, 429, 500, 502, 503, 504], true)) {
+                // A 403 joins them only when another exit is free to try — retrying
+                // it through the same address would just repeat the refusal.
+                $retriable = in_array($status, [408, 429, 500, 502, 503, 504], true)
+                    || ($status === 403 && $this->hasHealthyProxy($throttle));
+
+                if (! $retriable) {
                     break;
                 }
             } catch (Throwable $e) {

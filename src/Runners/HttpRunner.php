@@ -189,7 +189,9 @@ class HttpRunner implements Runner
                 $request = $request->withOptions(['proxy' => $this->proxy]);
             }
 
-            if ($this->user !== null && $this->password !== null) {
+            // An empty user clears the credentials rather than sending blank ones,
+            // so a reused runner can drop the auth of a previous attempt.
+            if (! empty($this->user) && $this->password !== null) {
                 $request = $request->withBasicAuth($this->user, $this->password);
             }
 

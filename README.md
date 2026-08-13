@@ -60,7 +60,7 @@ Every combination of those is covered by the test suite on each push, and once a
 - [The ScraperResponse](#the-scraperresponse)
 - [Handling failures (RequestException)](#handling-failures-requestexception)
 - [Passing parameters (run / with / make)](#passing-parameters-run--with--make)
-- [Configuration](#configuration) (proxy, timeout, headers, retries)
+- [Configuration](#configuration) (proxy, throttling, timeout, headers, retries)
 - [POST requests, body and cookies (HTTP driver)](#post-requests-body-and-cookies-http-driver)
 - [Interacting with the page (actions)](#interacting-with-the-page-actions)
 - [Conditional flow (when / repeatUntil)](#conditional-flow-when--repeatuntil)
@@ -498,6 +498,74 @@ percent-encoded (`p:w` → `p%3Aw`).
 An explicit `->proxy()` call, or the `$proxy` class property, always wins over
 the list. Leave `proxies` empty to keep the previous behaviour.
 
+### Throttling and proxy lockout
+
+Sites that dislike being scraped rarely say so politely: they answer `403` and
+stop serving that IP for a while. Two things keep a scraper welcome, and both are
+configured together, per **throttle key**:
+
+```php
+// config/larascraper.php
+'throttle' => [
+    'cendoj.search' => [
+        'interval'  => 10,    // seconds between requests, across all processes
+        'lock_base' => 120,   // first lockout after an address is refused
+        'lock_max'  => 3600,  // ceiling; each further refusal doubles the wait
+    ],
+],
+```
+
+A scraper declares its key with the `$throttleKey` property:
+
+```php
+class CendojSearchScraper extends Scraper
+{
+    protected ?string $throttleKey = 'cendoj.search';
+}
+```
+
+**Pacing.** Requests sharing a key are spaced `interval` seconds apart, across
+every process that makes them. A queue worker, a web request and an Artisan
+command share one schedule instead of each keeping its own, so parallel work does
+not turn into a burst.
+
+**Lockout.** When an exit is refused (`403` or `429`), it stops being used for
+that key for `lock_base` seconds, and the next attempt goes out through another
+one. Refused again while still remembered, it waits double, up to `lock_max`. The
+moment it succeeds, the escalation is forgotten — an address that recovers should
+not carry the penalty of a bad afternoon. Requests made with no proxy are an exit
+like any other and are locked out under the label `direct`.
+
+Because a lockout is about the address rather than the request, a `403` is only
+retried while some other exit is still free; with all of them locked out the
+fetch fails instead of hammering the one that just refused.
+
+Keys are deliberately **not hosts**. The same domain can serve a listing happily
+while refusing a download endpoint, and a lockout earned by the second should not
+stop the first. Scrapers that should share a budget simply share a key. Without
+`$throttleKey` the URL host is used, which is only a sane default — prefer naming
+the key. Keys with no entry in `throttle` are not paced or locked out at all and
+never touch the cache, so this costs nothing until you ask for it.
+
+State lives in one cache entry per key (`larascraper:throttle:{key}`) using
+Laravel's cache, which is what makes it shared between processes: with the `file`
+or `array` driver it is per-machine, and a shared store (Redis, Memcached,
+database) extends it across servers. Nothing needs sweeping — the entry expires
+on its own once the last lockout has elapsed.
+
+The state can be inspected or cleared directly:
+
+```php
+use EduLazaro\Larascraper\Support\Throttle;
+
+$throttle = new Throttle('cendoj.search');
+
+$throttle->lockedOut();                  // ['203.0.113.10:8080', 'direct']
+$throttle->available('203.0.113.11:8080'); // true
+$throttle->nextFreeIn($labels);          // seconds until the first one frees up
+$throttle->forget();                     // wipe pacing and lockouts for this key
+```
+
 ### Timeout
 
 Milliseconds; 20000 by default:
@@ -523,7 +591,7 @@ The number of attempts and the delay (seconds) between them. The chain method is
 ->retry(3, 5)   // 3 attempts, 5s apart
 ```
 
-Only the transient statuses `408`, `429`, `500`, `502`, `503` and `504` are retried; any other error fails fast (and, if it survives the retries, throws a `RequestException`).
+Only the transient statuses `408`, `429`, `500`, `502`, `503` and `504` are retried; any other error fails fast (and, if it survives the retries, throws a `RequestException`). A `403` is the exception to the exception: it is retried only while another proxy is free to try, since the refusal is about the address — see [Throttling and proxy lockout](#throttling-and-proxy-lockout).
 
 ## POST requests, body and cookies (HTTP driver)
 
