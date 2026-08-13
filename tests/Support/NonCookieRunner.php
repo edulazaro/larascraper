@@ -50,6 +50,11 @@ class NonCookieRunner implements Runner
         return $this;
     }
 
+    public function userAgent(?string $userAgent): static
+    {
+        return $this;
+    }
+
     public function withHeaders(array $headers): static
     {
         return $this;

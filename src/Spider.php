@@ -3,6 +3,7 @@
 namespace EduLazaro\Larascraper;
 
 use ArrayIterator;
+use EduLazaro\Larascraper\Runners\HttpRunner;
 use EduLazaro\Larascraper\Support\PendingScraper;
 use EduLazaro\Larascraper\Support\ScraperResponse;
 use EduLazaro\Larascraper\Support\Session;
@@ -362,8 +363,16 @@ abstract class Spider
     {
         return Http::pool(function ($pool) use ($specs) {
             foreach ($specs as $key => $spec) {
+                // This path builds its own request instead of going through
+                // HttpRunner::run(), so it asks the same resolver rather than
+                // repeating the precedence and drifting from it.
+                $headers = array_merge(
+                    ['User-Agent' => HttpRunner::resolveUserAgent($spec['userAgent'] ?? null)],
+                    $spec['headers'],
+                );
+
                 $request = $pool->as((string) $key)
-                    ->withHeaders($spec['headers'])
+                    ->withHeaders($headers)
                     ->timeout((int) max(1, ceil($spec['timeout'] / 1000)));
 
                 if (!empty($spec['cookies'])) {

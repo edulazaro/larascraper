@@ -35,6 +35,36 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | User agent (http driver only)
+    |--------------------------------------------------------------------------
+    |
+    | Who the `http` driver says it is. Without this it introduces itself as
+    | 'GuzzleHttp/7', which is not neutral — it announces that a script is
+    | calling, and plenty of sites answer accordingly.
+    |
+    | ⚠️ THE `browser` DRIVER IGNORES THIS, deliberately. It asks the Chrome it
+    | just launched and drops the word that gives headless away, so what it claims
+    | always matches what it is. Letting a string from here override that would
+    | put back the exact bug this replaced: a user agent naming one version while
+    | Client Hints emit another, which is a louder tell than an honest headless
+    | one. Nobody is here to ask on the http driver, so a written-out value is the
+    | only option — and it is HERE, not in the code, so you can bump it without
+    | waiting for a release.
+    |
+    | It ages. Every scraper property, ->userAgent() call, and explicit
+    | User-Agent header still wins over it.
+    |
+    | There is no way down to nothing: emptying or removing this key falls back to
+    | HttpRunner::DEFAULT_USER_AGENT rather than sending none, because sending none
+    | is not silence — Guzzle fills in 'GuzzleHttp/7'.
+    |
+    */
+
+    'http_user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        . ' (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+
+    /*
+    |--------------------------------------------------------------------------
     | Throttling
     |--------------------------------------------------------------------------
     |

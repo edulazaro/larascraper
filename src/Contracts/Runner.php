@@ -46,6 +46,19 @@ interface Runner
     public function proxy(string $proxy): static;
 
     /**
+     * Set the user agent to claim, or null for the runner's own default.
+     *
+     * What "own default" means is the runner's business: the browser driver asks
+     * the Chrome it launches (so version and platform stay true and Client Hints
+     * agree), while a driver with no browser to ask sends whatever it sent
+     * before. A value here overrides either.
+     *
+     * @param string|null $userAgent The user agent, or null for the default.
+     * @return static
+     */
+    public function userAgent(?string $userAgent): static;
+
+    /**
      * Set request headers.
      *
      * @param array $headers Associative array of headers.

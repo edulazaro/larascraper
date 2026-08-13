@@ -60,7 +60,7 @@ Every combination of those is covered by the test suite on each push, and once a
 - [The ScraperResponse](#the-scraperresponse)
 - [Handling failures (RequestException)](#handling-failures-requestexception)
 - [Passing parameters (run / with / make)](#passing-parameters-run--with--make)
-- [Configuration](#configuration) (proxy, throttling, timeout, headers, retries)
+- [Configuration](#configuration) (proxy, throttling, timeout, headers, user agent, retries)
 - [POST requests, body and cookies (HTTP driver)](#post-requests-body-and-cookies-http-driver)
 - [Interacting with the page (actions)](#interacting-with-the-page-actions)
 - [Conditional flow (when / repeatUntil)](#conditional-flow-when--repeatuntil)
@@ -599,6 +599,85 @@ Milliseconds; 20000 by default:
     'X-Custom-Header' => 'Hello',
 ])
 ```
+
+### User agent
+
+On the `browser` driver you normally set nothing. The user agent is **asked of
+the Chrome that just launched** and the one word that gives headless away is
+dropped:
+
+```
+Mozilla/5.0 (X11; Linux x86_64) … HeadlessChrome/148.0.0.0 Safari/537.36   ← what it is
+Mozilla/5.0 (X11; Linux x86_64) … Chrome/148.0.0.0 Safari/537.36           ← what it says
+```
+
+Version and platform stay true, which is the point. Client Hints (`Sec-CH-UA`,
+`navigator.userAgentData`) are filled in by the real Chrome and cannot be talked
+out of it, so **a made-up user agent is a louder signal than an honest headless
+one**: a browser that claims one version while emitting another is contradicting
+itself, and a real one never does. The build number needs no faking either —
+Chrome froze it at `0.0.0` years ago, so `Chrome/148.0.0.0` is character for
+character what a real Chrome 148 sends. It costs one CDP call (~0.3 ms against a
+~220 ms launch), so it is asked every time rather than cached; a cache would go
+stale on the next Chrome upgrade and put the mismatch straight back.
+
+Override it when you actually mean to — asking for the mobile version of a site,
+say — with the class property or the chain method:
+
+```php
+class MobileScraper extends Scraper
+{
+    protected ?string $userAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) …';
+}
+
+->userAgent('Mozilla/5.0 (iPhone; …)')   // per fetch
+->userAgent(null)                        // hand the question back to Chrome
+```
+
+A `User-Agent` written into `headers()` outranks both, on either driver — writing
+one by hand is the more deliberate act. On the browser driver it is applied
+through the same call as `->userAgent()` rather than sent as an extra header,
+which is the only way it takes effect at all: once Chrome has a user-agent
+override, an extra header for it is ignored. Every other header is sent
+untouched.
+
+#### The `http` driver has nobody to ask
+
+No browser launches, so there is nothing to derive from and the default has to be
+written out. It lives in config, not in the code, so you can bump it without
+waiting for a release — because unlike the derived one, **it ages**:
+
+```php
+// config/larascraper.php
+'http_user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) …Chrome/148.0.0.0…',
+```
+
+Emptying or deleting the key does **not** fall through to sending nothing — it
+falls back to `HttpRunner::DEFAULT_USER_AGENT`. Sending nothing is not silence:
+Guzzle fills in `GuzzleHttp/7`, which announces that a script is calling. To
+claim something else, name it; there is no way down to nothing.
+
+**The `browser` driver ignores this key**, deliberately. It asks Chrome. Letting a
+string from config override that would put back the exact bug it replaced: a user
+agent naming one version while Client Hints emit another. To claim something on
+the browser driver, use `$userAgent` or `->userAgent()`, which are per-scraper
+decisions rather than a global one.
+
+Precedence, in full:
+
+| | `browser` | `http` |
+|---|---|---|
+| `->headers(['User-Agent' => …])` | 1st | 1st |
+| `protected array $headers` | 1st | 1st |
+| `->userAgent('…')` | 2nd | 2nd |
+| `with(userAgent: '…')` | 3rd | 3rd |
+| `protected ?string $userAgent` | 4th | 4th |
+| `config('larascraper.http_user_agent')` | ignored | 5th |
+| nothing set | asked of Chrome | `HttpRunner::DEFAULT_USER_AGENT` |
+
+The first four are the same in both drivers. The last two are where they part,
+and for the same reason: the browser driver has someone to ask and the http
+driver does not.
 
 ### Retries
 

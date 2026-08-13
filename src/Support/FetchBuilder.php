@@ -60,6 +60,9 @@ class FetchBuilder
     protected ?string $proxy;
 
     /** @var string|null Proxy username, or null. */
+    /** @var string|null User agent to claim; null lets the browser answer. */
+    protected ?string $userAgent;
+
     protected ?string $proxyUser;
 
     /** @var string|null Proxy password, or null. */
@@ -114,6 +117,7 @@ class FetchBuilder
         $this->headers = $defaults['headers'] ?? [];
         $this->proxy = $defaults['proxy'] ?? null;
         $this->throttleKey = $defaults['throttleKey'] ?? null;
+        $this->userAgent = $defaults['userAgent'] ?? null;
         $this->proxyUser = $defaults['proxyUser'] ?? null;
         $this->proxyPass = $defaults['proxyPass'] ?? null;
         $this->maxRetries = $defaults['maxRetries'] ?? 3;
@@ -239,6 +243,24 @@ class FetchBuilder
         $this->proxy = $proxy;
         $this->proxyUser = $user;
         $this->proxyPass = $pass;
+        return $this;
+    }
+
+    /**
+     * Claim a specific user agent for this fetch.
+     *
+     * Rarely needed on the browser driver, and worth knowing why: left alone, it
+     * asks the Chrome it launches and only drops the word that gives headless
+     * away, so what it claims matches what it is — same version, same platform,
+     * and Client Hints that agree. A string set here replaces the claim but not
+     * the browser, so anything it contradicts is a tell. Set it when you mean to
+     * (a site that serves a mobile page, say), not to look more human.
+     *
+     * @param string|null $userAgent The user agent, or null for the default.
+     */
+    public function userAgent(?string $userAgent): static
+    {
+        $this->userAgent = $userAgent;
         return $this;
     }
 
@@ -457,6 +479,7 @@ class FetchBuilder
 
         $runner = $runnerClass::on($this->url)
             ->timeout($this->timeout)
+            ->userAgent($this->userAgent)
             ->withHeaders($this->headers)
             ->withActions($this->actions)
             ->method($this->httpMethod)
@@ -595,6 +618,7 @@ class FetchBuilder
             'url' => $this->url,
             'method' => strtoupper($this->httpMethod),
             'headers' => $this->headers,
+            'userAgent' => $this->userAgent,
             'timeout' => $this->timeout,
             'cookies' => $cookies,
             'cookieDomain' => $this->cookieDomain ?: $host,

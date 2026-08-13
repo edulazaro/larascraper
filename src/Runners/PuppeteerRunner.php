@@ -24,6 +24,9 @@ class PuppeteerRunner implements Runner
     protected string $url;
     protected ?string $proxy = null;
     protected ?string $user = null;
+
+    /** @var string|null User agent override; null asks the launched browser. */
+    protected ?string $userAgent = null;
     protected ?string $password = null;
     protected array $headers = [];
     protected array $actions = [];
@@ -65,6 +68,24 @@ class PuppeteerRunner implements Runner
     public function proxy(string $proxy): static
     {
         $this->proxy = $proxy;
+        return $this;
+    }
+
+    /**
+     * Override the user agent the browser reports.
+     *
+     * Leave it unset and the browser answers for itself: scraper.cjs asks the
+     * Chrome it just launched and only strips the word that gives headless away,
+     * so version and platform stay true and Client Hints agree with the UA
+     * string. Setting one here is claiming to be something you are not, which is
+     * sometimes what you want and is always your call to make.
+     *
+     * @param string|null $userAgent The user agent, or null to let Chrome answer.
+     * @return static
+     */
+    public function userAgent(?string $userAgent): static
+    {
+        $this->userAgent = $userAgent;
         return $this;
     }
 
@@ -202,6 +223,10 @@ class PuppeteerRunner implements Runner
 
         if ($this->password) {
             $args[] = '--pass=' . escapeshellarg($this->password);
+        }
+
+        if ($this->userAgent) {
+            $args[] = '--ua=' . escapeshellarg($this->userAgent);
         }
 
         if (!empty($this->headers)) {

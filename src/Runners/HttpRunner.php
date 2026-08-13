@@ -23,6 +23,9 @@ class HttpRunner implements Runner
     protected ?string $user = null;
     protected ?string $password = null;
     protected array $headers = [];
+
+    /** @var string|null User agent, sent as a header; null falls back (see resolveUserAgent()). */
+    protected ?string $userAgent = null;
     protected int $timeout = 20000;
     protected string $method = 'GET';
     protected mixed $body = null;
@@ -67,6 +70,56 @@ class HttpRunner implements Runner
     {
         $this->proxy = $proxy;
         return $this;
+    }
+
+    /**
+     * Set the user agent sent with the request.
+     *
+     * Unlike the browser driver there is nobody to ask here — no Chrome is
+     * launched — so null does not mean "send none": it means "no opinion", and
+     * the request falls back to config and then to DEFAULT_USER_AGENT. An
+     * explicit User-Agent in withHeaders() still wins over all of it.
+     *
+     * @param string|null $userAgent The user agent, or null to fall back.
+     * @return static
+     */
+    public function userAgent(?string $userAgent): static
+    {
+        $this->userAgent = $userAgent;
+        return $this;
+    }
+
+    /**
+     * Last-resort user agent, used when config has nothing usable to say.
+     *
+     * Written out because there is nobody to ask: no browser launches on this
+     * driver. It ages, which is why config is the place to change it — this is
+     * only the floor, so that no request ever goes out announcing itself as a
+     * script. Kept public because Spider's concurrent path builds its own
+     * requests and has to land on the same answer.
+     */
+    public const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        . ' (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
+
+    /**
+     * Settle on a user agent: what the caller chose, else config, else the floor.
+     *
+     * There is deliberately no way down to nothing. Sending none means Guzzle
+     * fills in 'GuzzleHttp/7', which is not a neutral absence — it is an
+     * announcement that a script is calling — so an empty or missing config
+     * reads as "no opinion", not as "say nothing".
+     *
+     * @param string|null $explicit What the scraper asked for, if anything.
+     */
+    public static function resolveUserAgent(?string $explicit = null): string
+    {
+        if (! empty($explicit)) {
+            return $explicit;
+        }
+
+        $configured = function_exists('config') ? config('larascraper.http_user_agent') : null;
+
+        return is_string($configured) && $configured !== '' ? $configured : self::DEFAULT_USER_AGENT;
     }
 
     /**
@@ -182,7 +235,14 @@ class HttpRunner implements Runner
     public function run(): array
     {
         try {
-            $request = Http::withHeaders($this->headers)
+            // An explicit header still outranks it: writing one by hand is a
+            // deliberate act, and this is only a default.
+            $headers = array_merge(
+                ['User-Agent' => static::resolveUserAgent($this->userAgent)],
+                $this->headers,
+            );
+
+            $request = Http::withHeaders($headers)
                 ->timeout((int) max(1, ceil($this->timeout / 1000)));
 
             if ($this->proxy) {

@@ -70,6 +70,7 @@ const proxy = args.proxy;
 const proxyUser = args.user;
 const proxyPass = args.pass;
 const timeout = parseInt(args.timeout ?? '20000', 10);
+const userAgent = args.ua || null;
 
 let headers = {};
 
@@ -716,14 +717,51 @@ async function runActions(page, actions, timeout) {
             await page.authenticate({ username: proxyUser, password: proxyPass });
         }
 
+        // WHO WE SAY WE ARE IS ASKED, NOT INVENTED. This used to be a string typed
+        // by hand — 'Chrome/110 on Windows' — and it rotted: the browser actually
+        // launching here is Chrome 148 on Linux. That mismatch is worse than an
+        // honest headless UA, because Client Hints (Sec-CH-UA, navigator
+        // .userAgentData) are filled in by the real Chrome and cannot be talked
+        // out of it. A browser claiming one version while emitting another is
+        // contradicting itself, and a real one never does.
+        //
+        // So we ask the browser we just launched and change the single word that
+        // gives it away. Version and platform stay true, which is the whole point.
+        // The build number needs no faking either: Chrome froze it at 0.0.0 years
+        // ago, so 'Chrome/148.0.0.0' is character-for-character what a real one
+        // sends. Costs one CDP round-trip, ~0.3ms against a ~220ms launch.
+        const realUserAgent = (await browser.userAgent()).replace('HeadlessChrome', 'Chrome');
+
+        // A User-Agent among the headers is ROUTED HERE rather than left to
+        // setExtraHTTPHeaders, which would drop it on the floor: once
+        // setUserAgent runs, the CDP override outranks any extra header, and even
+        // without it the stealth plugin sets one that outranks it too. So a
+        // caller writing the header by hand would have seen it silently ignored —
+        // on the http driver the same header works, and a difference like that
+        // between drivers is a trap, not a feature.
+        //
+        // It also has to go through setUserAgent to be worth honouring at all:
+        // that is the call that moves BOTH the wire header and
+        // navigator.userAgent. A change to only one of them leaves the browser
+        // disagreeing with itself, which is the tell this whole block exists to
+        // avoid.
+        const headerKey = Object.keys(headers).find(k => k.toLowerCase() === 'user-agent');
+        const headerUserAgent = headerKey ? headers[headerKey] : null;
+
+        // Same precedence as the http driver: an explicit header outranks --ua,
+        // because writing one by hand is the more deliberate act of the two.
+        await page.setUserAgent(headerUserAgent || userAgent || realUserAgent);
+
+        // Dropped from the extra headers now that it has been applied properly.
+        // Leaving it would be dead weight at best and, if Chrome ever changed
+        // which one wins, a second source of truth for the same fact.
+        if (headerKey) {
+            delete headers[headerKey];
+        }
+
         if (Object.keys(headers).length > 0) {
             await page.setExtraHTTPHeaders(headers);
         }
-
-        await page.setUserAgent(
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-        );
 
         // Arm the response recorder before navigating, so capture() can grab a
         // file the initial load or a later click/navigation triggers.

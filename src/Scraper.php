@@ -69,6 +69,15 @@ abstract class Scraper
     /** @var array Request headers. */
     protected array $headers = [];
 
+    /**
+     * @var string|null User agent to claim, or null to let the browser answer
+     *                  for itself (browser driver). Overriding it is claiming to
+     *                  be something you are not: fine when deliberate, but the
+     *                  derived one is consistent with the Chrome actually running
+     *                  and an invented one is not.
+     */
+    protected ?string $userAgent = null;
+
     /** @var string|null Proxy server (IP:PORT or full URL), or null. */
     protected ?string $proxy = null;
 
@@ -397,6 +406,7 @@ abstract class Scraper
             'drivers' => $this->drivers,
             'timeout' => $this->timeout,
             'headers' => $this->headers,
+            'userAgent' => $this->userAgent,
             'proxy' => $this->proxy,
             'throttleKey' => $this->throttleKey,
             'proxyUser' => $this->proxyUser,
