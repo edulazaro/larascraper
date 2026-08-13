@@ -143,12 +143,52 @@ function pickCaptured(expect) {
         const r = seenResponses[i];
         const ct = (r.contentType || '').toLowerCase();
         const magic = String.fromCharCode(...new Uint8Array(r.buffer.slice(0, 4)));
-        const ok = expect
-            ? (ct.includes(String(expect).toLowerCase()) || (String(expect).toLowerCase().includes('pdf') && magic === '%PDF'))
+        const want = String(expect || '').toLowerCase();
+
+        // For PDFs the BYTES decide, never the content-type. When the browser
+        // navigates to a PDF it renders it in the built-in viewer, and the
+        // navigation response still carries `Content-Type: application/pdf`
+        // while its body is the viewer's HTML wrapper (a few hundred bytes of
+        // <!doctype html> around a closed shadow root). Trusting the header
+        // there hands back that wrapper as if it were the document — silently,
+        // which is worse than failing.
+        const ok = want
+            ? (want.includes('pdf') ? magic === '%PDF' : ct.includes(want))
             : true;
+
         if (ok) return r;
     }
     return null;
+}
+
+/**
+ * Read the bytes of whatever the page is currently showing, from inside the
+ * page. Used as a last resort by capture(): when a navigation lands directly on
+ * a file, the browser may keep the body for its own viewer and never expose it
+ * to the response recorder. An in-page fetch of the same URL re-requests it with
+ * the session cookies already set and returns the real bytes.
+ */
+async function fetchCurrentUrl(page) {
+    try {
+        const result = await page.evaluate(async () => {
+            const resp = await fetch(location.href, { credentials: 'include' });
+            const contentType = resp.headers.get('content-type') || '';
+            const bytes = new Uint8Array(await resp.arrayBuffer());
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return { contentType, base64: btoa(bin) };
+        });
+
+        if (result && result.base64) {
+            seenResponses.push({
+                contentType: result.contentType || '',
+                buffer: Buffer.from(result.base64, 'base64'),
+            });
+            return true;
+        }
+    } catch (e) { /* la página puede no permitir fetch (about:blank, cross-origin) */ }
+
+    return false;
 }
 
 /**
@@ -165,6 +205,14 @@ async function captureResponse(page, action, timeout) {
         if (match) break;
         await new Promise(r => setTimeout(r, 100));
     }
+
+    // Nada válido en el grabador: puede que el navegador esté PLANTADO sobre el
+    // fichero (navegó a un PDF y se lo quedó su visor). Se pide otra vez desde
+    // dentro de la página, que sí devuelve los bytes.
+    if (!match && await fetchCurrentUrl(page)) {
+        match = pickCaptured(action.expect);
+    }
+
     if (!match) return false;
     capture.done = true;
     capture.file = Buffer.from(match.buffer).toString('base64');
