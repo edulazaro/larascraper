@@ -480,6 +480,7 @@ class FetchBuilder
 
         $attempt = 0;
         $response = [];
+        $rotating = false;
 
         while (++$attempt <= $this->maxRetries) {
             // The exit is chosen per attempt, not once: a proxy the target has just
@@ -522,6 +523,12 @@ class FetchBuilder
                     $this->log("Locked out {$label} for {$seconds}s after {$status}");
                 }
 
+                // Waiting is for a target that might recover in a moment. A refusal
+                // is not that: the address is spent, and the next attempt goes out
+                // through a different one, which the pause does nothing to prepare.
+                // The target's own rhythm still applies — pace() runs either way.
+                $rotating = $refused;
+
                 // Only retriable statuses get another attempt; the rest break out.
                 // A 403 joins them only when another exit is free to try — retrying
                 // it through the same address would just repeat the refusal.
@@ -534,6 +541,8 @@ class FetchBuilder
             } catch (Throwable $e) {
                 $this->log("Error getting {$this->url} on attempt #{$attempt}: {$e->getMessage()}");
 
+                $rotating = false;
+
                 $response = [
                     'success' => false,
                     'status' => $response['status'] ?? 0,
@@ -542,7 +551,7 @@ class FetchBuilder
                 ];
             }
 
-            if ($attempt < $this->maxRetries) {
+            if ($attempt < $this->maxRetries && ! $rotating) {
                 $this->log("Retrying in {$this->retryDelay} seconds...");
                 sleep($this->retryDelay);
             }

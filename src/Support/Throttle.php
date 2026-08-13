@@ -2,6 +2,9 @@
 
 namespace EduLazaro\Larascraper\Support;
 
+use EduLazaro\Larascraper\Exceptions\ThrottledException;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -56,8 +59,17 @@ class Throttle
     /**
      * Wait until this target may be contacted again.
      *
-     * Returns the seconds spent waiting. Callers that need to bound their own
-     * runtime can use it; most can ignore it.
+     * A SLOT IS RESERVED BEFORE SLEEPING, and the reservation is what the lock
+     * protects — not the sleep. Reading "when was the last request" and then
+     * waiting on it is a race that defeats the whole point: three workers waking
+     * together read the same answer, wait the same seconds and fire at the same
+     * instant, which is a burst of three wearing the costume of a paced request.
+     * Reserving first hands them three different slots, and they sleep in
+     * parallel rather than queueing behind each other.
+     *
+     * Returns the seconds spent waiting.
+     *
+     * @throws ThrottledException If the slot is further away than `max_wait`.
      */
     public function pace(): int
     {
@@ -67,15 +79,68 @@ class Throttle
             return 0;
         }
 
-        $state = $this->state();
-        $last = (int) ($state[self::LAST] ?? 0);
-        $wait = max(0, ($last + $interval) - $this->now());
+        $wait = $this->reserve($interval);
 
         if ($wait > 0) {
             $this->sleep($wait);
         }
 
-        $state[self::LAST] = $this->now();
+        return $wait;
+    }
+
+    /**
+     * Claim the next free slot for this target and return the seconds until it.
+     *
+     * The critical section is two cache operations long, so contention costs
+     * nothing worth measuring. A store with no locks (or a lock that cannot be
+     * had) falls through to the unguarded read: pacing that occasionally lets two
+     * requests through together is still better than no pacing at all.
+     */
+    private function reserve(int $interval): int
+    {
+        $store = Cache::getStore();
+
+        if (! $store instanceof LockProvider) {
+            return $this->claim($interval);
+        }
+
+        // Ten seconds is a generous ceiling for two cache operations, and it is
+        // only ever reached by a process that died holding the lock.
+        $lock = Cache::lock(self::PREFIX . 'lock:' . $this->key, 10);
+
+        // Waited on briefly rather than blocked on: the queue being reserved is
+        // the one that matters, and a second one on top of it would be invisible.
+        // Failing to get it falls through to an unguarded claim — pacing that
+        // occasionally lets two through together still beats no pacing.
+        try {
+            $lock->block(2);
+        } catch (LockTimeoutException) {
+            return $this->claim($interval);
+        }
+
+        try {
+            return $this->claim($interval);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /** Move the schedule forward by one interval and return the wait it implies. */
+    private function claim(int $interval): int
+    {
+        $now = $this->now();
+        $state = $this->state();
+        $slot = max($now, (int) ($state[self::LAST] ?? 0) + $interval);
+        $wait = $slot - $now;
+        $maxWait = (int) $this->config('max_wait', 0);
+
+        // Refused before the slot is taken, so a caller that gives up does not
+        // leave the queue longer for everyone behind it.
+        if ($maxWait > 0 && $wait > $maxWait) {
+            throw new ThrottledException($wait);
+        }
+
+        $state[self::LAST] = $slot;
         $this->store($state);
 
         return $wait;
@@ -197,11 +262,16 @@ class Throttle
 
     /**
      * Persist the state, keeping it alive as long as it still says something:
-     * the longest lockout, or one pacing interval, whichever runs later.
+     * the longest lockout, or the last reserved slot, whichever runs later.
      */
     private function store(array $state): void
     {
-        $deadlines = [$this->now() + max((int) $this->config('interval', 0), 1)];
+        $deadlines = [
+            $this->now() + max((int) $this->config('interval', 0), 1),
+            // Slots are reserved into the future, so the entry has to outlive the
+            // furthest one: expiring first would hand the same slot out twice.
+            (int) ($state[self::LAST] ?? 0) + (int) $this->config('interval', 0),
+        ];
 
         foreach ($state as $label => $entry) {
             if ($label !== self::LAST && is_array($entry)) {

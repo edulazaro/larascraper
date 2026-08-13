@@ -2,6 +2,7 @@
 
 namespace EduLazaro\Larascraper\Tests;
 
+use EduLazaro\Larascraper\Exceptions\ThrottledException;
 use EduLazaro\Larascraper\Support\Throttle;
 use Illuminate\Support\Facades\Cache;
 
@@ -62,6 +63,72 @@ class ThrottleTest extends BaseTestCase
         $otro = new FakeClockThrottle('shop.listing');
 
         $this->assertSame(10, $otro->pace(), 'State must come from the cache, not from the object.');
+    }
+
+    /**
+     * The reason a slot is reserved before sleeping rather than after reading.
+     * These three instances stand in for three queue workers waking at the same
+     * instant — the clock does not move between them — and they must come away
+     * with three different departure times, not one shared by all three.
+     */
+    public function test_processes_arriving_together_get_different_slots(): void
+    {
+        $this->assertSame(0, (new FakeClockThrottle('shop.listing'))->pace());
+        $this->assertSame(10, (new FakeClockThrottle('shop.listing'))->pace());
+        $this->assertSame(20, (new FakeClockThrottle('shop.listing'))->pace());
+    }
+
+    public function test_a_slot_further_away_than_max_wait_is_refused(): void
+    {
+        config(['larascraper.throttle' => [
+            'shop.listing' => ['interval' => 10, 'max_wait' => 25],
+        ]]);
+
+        (new FakeClockThrottle('shop.listing'))->pace();   // now
+        (new FakeClockThrottle('shop.listing'))->pace();   // +10
+        (new FakeClockThrottle('shop.listing'))->pace();   // +20
+
+        $this->expectException(ThrottledException::class);
+
+        (new FakeClockThrottle('shop.listing'))->pace();   // +30, past the ceiling
+    }
+
+    public function test_a_refused_slot_is_left_for_whoever_comes_next(): void
+    {
+        config(['larascraper.throttle' => [
+            'shop.listing' => ['interval' => 10, 'max_wait' => 15],
+        ]]);
+
+        (new FakeClockThrottle('shop.listing'))->pace();   // now
+        (new FakeClockThrottle('shop.listing'))->pace();   // +10
+
+        try {
+            (new FakeClockThrottle('shop.listing'))->pace();   // +20, refused
+            $this->fail('The slot past max_wait should have been refused.');
+        } catch (ThrottledException $e) {
+            $this->assertSame(20, $e->seconds, 'The refusal should say how long the wait would have been.');
+        }
+
+        // Giving up must not cost the queue anything: had the slot been taken
+        // before throwing, everyone behind would pay for a request never made.
+        $this->clockAt(11);
+
+        $this->assertSame(9, (new FakeClockThrottle('shop.listing'))->pace());
+    }
+
+    public function test_without_max_wait_it_waits_however_long_it_takes(): void
+    {
+        for ($i = 0; $i < 20; $i++) {
+            $wait = (new FakeClockThrottle('shop.listing'))->pace();
+        }
+
+        $this->assertSame(190, $wait, 'With no ceiling configured, nothing is ever refused.');
+    }
+
+    /** Move the shared clock without needing an instance to do it. */
+    private function clockAt(int $seconds): void
+    {
+        FakeClockThrottle::$offset = $seconds;
     }
 
     public function test_a_proxy_is_available_until_it_is_refused(): void

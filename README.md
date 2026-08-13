@@ -511,6 +511,7 @@ configured together, per **throttle key**:
         'interval'  => 10,    // seconds between requests, across all processes
         'lock_base' => 120,   // first lockout after an address is refused
         'lock_max'  => 3600,  // ceiling; each further refusal doubles the wait
+        'max_wait'  => 30,    // give up rather than queue longer (0 = no limit)
     ],
 ],
 ```
@@ -529,6 +530,20 @@ every process that makes them. A queue worker, a web request and an Artisan
 command share one schedule instead of each keeping its own, so parallel work does
 not turn into a burst.
 
+Each request **reserves its turn before waiting**, rather than reading when the
+last one went out and waiting on that. The difference matters exactly when it is
+needed most: three workers waking at the same instant read the same answer, wait
+the same seconds, and fire together — a burst of three dressed as a paced
+request. Reserving gives them three different departure times, which they then
+wait out in parallel.
+
+Reserving means a busy target grows a queue, and `max_wait` bounds it: a turn
+further away than that throws `ThrottledException` instead of parking the worker,
+and the turn is left for whoever comes next. Left at `0` (the default) nothing is
+ever refused. Catch it where a scraper distinguishes "the site said no" from "we
+never asked" — reporting a queue as an empty result set is how a network problem
+gets read as a fact about the world.
+
 **Lockout.** When an exit is refused (`403` or `429`), it stops being used for
 that key for `lock_base` seconds, and the next attempt goes out through another
 one. Refused again while still remembered, it waits double, up to `lock_max`. The
@@ -538,7 +553,9 @@ like any other and are locked out under the label `direct`.
 
 Because a lockout is about the address rather than the request, a `403` is only
 retried while some other exit is still free; with all of them locked out the
-fetch fails instead of hammering the one that just refused.
+fetch fails instead of hammering the one that just refused. That retry also
+skips the `retry()` delay — waiting is for a target that might recover in a
+moment, and a refusal is not that. The pacing interval still applies.
 
 Keys are deliberately **not hosts**. The same domain can serve a listing happily
 while refusing a download endpoint, and a lockout earned by the second should not

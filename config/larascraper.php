@@ -48,7 +48,12 @@ return [
     |       'interval'  => 10,    // seconds between requests, across all processes
     |       'lock_base' => 120,   // first lockout after a proxy is refused
     |       'lock_max'  => 3600,  // ceiling; each further refusal doubles the wait
+    |       'max_wait'  => 30,    // give up rather than hold a worker longer (0 = no limit)
     |   ],
+    |
+    | Requests reserve their turn instead of waiting on the last one, so processes
+    | that wake together depart apart. With 'max_wait' set, a turn further away
+    | than that throws a ThrottledException rather than parking a queue worker.
     |
     | Keys with no entry here are not throttled at all and never touch the cache,
     | so this costs nothing until you ask for it.
