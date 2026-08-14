@@ -21,6 +21,22 @@ namespace EduLazaro\Larascraper\Contracts;
 interface Runner
 {
     /**
+     * OPTIONAL CAPABILITY — deliberately not declared here.
+     *
+     *     public function userAgent(?string $userAgent): static;
+     *
+     * A runner that declares it is told which user agent to claim; one that does
+     * not is simply never asked. FetchBuilder checks before calling.
+     *
+     * It is not part of the contract because adding a method to an interface is
+     * not a feature, it is a fatal error for everyone who already implements it:
+     * a custom runner written against an earlier version stops loading outright
+     * ("must implement the remaining methods"). A capability worth having is not
+     * worth breaking every third-party runner to get, so it is asked for rather
+     * than required.
+     */
+
+    /**
      * Initialize the runner with a target URL.
      *
      * @param string $url The URL to scrape.
@@ -44,19 +60,6 @@ interface Runner
      * @return static
      */
     public function proxy(string $proxy): static;
-
-    /**
-     * Set the user agent to claim, or null for the runner's own default.
-     *
-     * What "own default" means is the runner's business: the browser driver asks
-     * the Chrome it launches (so version and platform stay true and Client Hints
-     * agree), while a driver with no browser to ask sends whatever it sent
-     * before. A value here overrides either.
-     *
-     * @param string|null $userAgent The user agent, or null for the default.
-     * @return static
-     */
-    public function userAgent(?string $userAgent): static;
 
     /**
      * Set request headers.

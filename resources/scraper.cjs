@@ -280,14 +280,63 @@ async function submitAndCapture(page, action) {
  * `->submit('form')->capture(['expect' => 'application/pdf'])`.
  */
 async function submitForm(page, action) {
-    const result = await page.evaluate(async (formSel) => {
+    // NATIVE: ask the form to submit itself and get out of the way.
+    //
+    // The default path below builds the request by hand, which is fine for a
+    // static form but wrong for a page that submits over AJAX: the response
+    // lands in a variable of ours, the page never learns it arrived, and nothing
+    // is painted. It also puts a request on the wire that the site's own code did
+    // not make — missing the headers its JavaScript adds, out of the sequence it
+    // always follows — which on a site that watches for that is a signature.
+    //
+    // requestSubmit() sends no request at all. It fires the form's submit event,
+    // the page's own handler wakes up, and the page does everything the way it
+    // normally does: right headers, right order, and it renders the answer where
+    // it belongs. Which is what makes a plain waitForSelector work afterwards.
+    if (action.native) {
+        return page.evaluate((formSel) => {
+            const form = document.querySelector(formSel);
+            if (!form) return false;
+
+            // requestSubmit fires the event; submit() would bypass every handler
+            // and navigate, which is the opposite of the point.
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit();
+            } else {
+                form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            }
+
+            return true;
+        }, action.formSelector);
+    }
+
+    const result = await page.evaluate(async (formSel, into) => {
         const form = document.querySelector(formSel);
         if (!form) return null;
 
         const body = new URLSearchParams();
+
         for (const el of form.querySelectorAll('input[name], select[name], textarea[name]')) {
-            if (el.type === 'submit') continue;
-            body.set(el.name, el.value);
+            // Send what a browser would send, and nothing else.
+            //
+            // ⚠️ AN UNCHECKED BOX USED TO BE SENT ANYWAY. Every element's `value`
+            // went into the body regardless of its state, so a checkbox nobody
+            // touched still submitted its value — silently turning on filters the
+            // scraper never asked for. On a real search form that is not a cosmetic
+            // bug: a stray "only plenary sessions" flag narrows a result set to
+            // almost nothing, and the search still looks like it worked.
+            if (el.disabled) continue;
+            if (el.type === 'submit' || el.type === 'button' || el.type === 'reset') continue;
+            if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) continue;
+
+            // A <select multiple> contributes one entry per selected option, so
+            // append rather than set; set() would keep only the last one.
+            if (el.multiple && el.selectedOptions) {
+                for (const opt of el.selectedOptions) body.append(el.name, opt.value);
+                continue;
+            }
+
+            body.append(el.name, el.value);
         }
 
         const method = (form.getAttribute('method') || 'get').toUpperCase();
@@ -305,8 +354,25 @@ async function submitForm(page, action) {
         const bytes = new Uint8Array(await resp.arrayBuffer());
         let bin = '';
         for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-        return { contentType, base64: btoa(bin) };
-    }, action.formSelector);
+
+        // WITHOUT `into`, THE PAGE NEVER LEARNS WHAT CAME BACK. The response is
+        // fetched here, so the DOM is untouched: crawlers parse the page and see
+        // the form they started from, waits time out on selectors that will never
+        // appear, and a submit that worked perfectly reads as a submit that did
+        // nothing. Handing a container selector puts the answer where the rest of
+        // the chain is already looking.
+        let rendered = false;
+
+        if (into && /html|xml/i.test(contentType)) {
+            const target = document.querySelector(into);
+            if (target) {
+                target.innerHTML = new TextDecoder('utf-8').decode(bytes);
+                rendered = true;
+            }
+        }
+
+        return { contentType, base64: btoa(bin), rendered };
+    }, action.formSelector, action.into ?? null);
 
     if (result && result.base64) {
         seenResponses.push({ contentType: result.contentType || '', buffer: Buffer.from(result.base64, 'base64') });
@@ -713,6 +779,46 @@ async function runActions(page, actions, timeout) {
         browser = await puppeteer.launch(launchOptions);
         const page = await browser.newPage();
 
+        // WHAT THE PAGE DID BEHIND OUR BACK. A scraper that drives a page can only
+        // see the DOM it ends up with, and a DOM that never changed looks exactly
+        // like a DOM whose XHR was never sent, was refused, or threw on the way.
+        // Telling those apart from the outside is guesswork; from in here it is
+        // three event handlers.
+        //
+        // Only the interesting few are kept: XHR/fetch (the calls a modern page
+        // makes to do its actual work), requests that failed outright, and errors
+        // the page's own JavaScript raised. Images, css and fonts are noise.
+        const diagnostics = { xhr: [], failed: [], errors: [] };
+        const CAP = 40;
+
+        const note = (bucket, entry) => {
+            if (bucket.length < CAP) bucket.push(entry);
+        };
+
+        page.on('response', (res) => {
+            const type = res.request().resourceType();
+            if (type === 'xhr' || type === 'fetch') {
+                note(diagnostics.xhr, `${res.status()} ${res.request().method()} ${res.url()}`);
+            }
+        });
+
+        page.on('requestfailed', (req) => {
+            note(diagnostics.failed, `${req.method()} ${req.url()} — ${req.failure()?.errorText ?? 'failed'}`);
+        });
+
+        // pageerror is an uncaught exception in the page's own code. One of these
+        // early in the load can leave every widget on the page unbound, which
+        // looks like "the site ignored us" and is nothing of the sort.
+        page.on('pageerror', (err) => {
+            note(diagnostics.errors, String(err?.message ?? err).slice(0, 300));
+        });
+
+        page.on('console', (msg) => {
+            if (msg.type() === 'error') {
+                note(diagnostics.errors, `console: ${msg.text()}`.slice(0, 300));
+            }
+        });
+
         if (proxyUser && proxyPass) {
             await page.authenticate({ username: proxyUser, password: proxyPass });
         }
@@ -790,6 +896,13 @@ async function runActions(page, actions, timeout) {
             if (capture.done) {
                 out.file = capture.file;          // base64
                 out.contentType = capture.contentType;
+            }
+            // Only when there is something to say, so a healthy run stays quiet.
+            const seen = Object.fromEntries(
+                Object.entries(diagnostics).filter(([, v]) => v.length > 0)
+            );
+            if (Object.keys(seen).length > 0) {
+                out.diagnostics = seen;
             }
             console.log(JSON.stringify(out));
         }

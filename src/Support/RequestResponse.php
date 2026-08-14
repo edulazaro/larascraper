@@ -22,6 +22,12 @@ class RequestResponse
      * @param CapturedFile|null $file A captured file (a PDF, etc.), or null. Read it with ->text()/->vision()/->bytes().
      * @param string|null $contentType The content type of the response (e.g. 'application/pdf'), or null.
      * @param array<string, string> $cookies Response cookies as a name => value map.
+     * @param array<string, list<string>> $diagnostics What the page did that a DOM
+     *        cannot show: 'xhr' (the calls it made and their status), 'failed'
+     *        (requests that never completed) and 'errors' (exceptions its own
+     *        JavaScript raised). Empty when nothing went wrong. A page whose DOM
+     *        never changed looks the same whether its XHR was never sent, was
+     *        refused, or threw — this is what tells those apart.
      */
     public function __construct(
         public int $status = 0,
@@ -30,6 +36,7 @@ class RequestResponse
         public ?CapturedFile $file = null,
         public ?string $contentType = null,
         public array $cookies = [],
+        public array $diagnostics = [],
     ) {
     }
 

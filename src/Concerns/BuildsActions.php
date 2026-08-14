@@ -291,21 +291,53 @@ trait BuildsActions
     }
 
     /**
-     * Submit a form in-page (via fetch) so a following capture() can grab the
-     * response. Reads the form's fields and posts to its action, then records
-     * the response for capture() to pick up. The composable replacement for
+     * Submit a form in-page (via fetch). Reads the form's fields exactly as a
+     * browser would — unchecked boxes and disabled inputs stay out, every
+     * selected option of a multiple select goes in — and requests its action
+     * with the form's own method. The composable replacement for
      * submitAndCapture():
      *
      *     ->submit('form')->capture(['expect' => 'application/pdf'])
      *
+     * Use it when clicking the submit button does not work. That happens more
+     * than it should: a widget that swallows the click, a handler bound to a
+     * different element, a button covered by an open dropdown. All of them look
+     * identical from outside — no error, no request, no change — and this path
+     * sidesteps the page's own JavaScript entirely.
+     *
+     * ⚠️ THE PAGE DOES NOT SEE THE RESPONSE unless you say where to put it. The
+     * fetch happens beside the DOM, not through it, so without `into` a crawler
+     * keeps parsing the page you started from and a wait keeps waiting for a
+     * selector that will never arrive. Pass a container to render into when the
+     * response is HTML you intend to read:
+     *
+     *     ->submit('#search', ['into' => '#results'])
+     *         ->waitForSelector('#results .row')
+     *         ->crawl(ResultsCrawler::class)
+     *
      * @param string $formSelector CSS selector of the <form> to submit.
+     * `native` is the other way to do this, and usually the better one on a page
+     * with JavaScript of its own: instead of making the request, it fires the
+     * form's submit event and lets the page do everything — its handler, its
+     * headers, its rendering. Nothing is forged and nothing needs `into`, because
+     * the page paints the answer itself and a plain waitForSelector() sees it:
+     *
+     *     ->submit('#search', ['native' => true])->waitForSelector('.result')
+     *
+     * @param string $formSelector CSS selector of the <form> to submit.
+     * @param array{into?: string, native?: bool} $options `into`: selector of the
+     *        element to render an HTML response into. `native`: fire the form's
+     *        own submit instead of requesting it here (then `into` is unused, and
+     *        the response never reaches capture()).
      * @return static
      */
-    public function submit(string $formSelector): static
+    public function submit(string $formSelector, array $options = []): static
     {
         $this->actions[] = [
             'type' => 'submit',
             'formSelector' => $formSelector,
+            'into' => $options['into'] ?? null,
+            'native' => $options['native'] ?? false,
         ];
 
         return $this;

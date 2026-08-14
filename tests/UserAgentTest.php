@@ -113,25 +113,37 @@ class UserAgentTest extends BaseTestCase
     }
 
     /**
-     * There is no way down to nothing, and that is the point: sending no user
-     * agent is not silence — Guzzle fills in 'GuzzleHttp/7'. So an empty or
-     * missing key reads as "no opinion" and lands on the floor instead.
+     * Out of the box the http driver introduces itself as a browser. Not because
+     * a browser string is honest here — nothing is launched — but because the
+     * alternative is 'GuzzleHttp/7', and a scraping library whose default request
+     * announces that a script is calling has a defect, not a neutral default.
      */
-    public function test_emptying_the_config_falls_to_the_floor_not_to_nothing(): void
+    public function test_the_default_is_a_browser_not_a_script(): void
     {
         Http::fake(['*' => Http::response('<html></html>', 200)]);
 
-        foreach (['', null] as $emptied) {
-            config(['larascraper.http_user_agent' => $emptied]);
+        HttpRunner::on('https://shop.test/x')->run();
 
-            HttpRunner::on('https://shop.test/x')->run();
-        }
-
-        Http::assertSentCount(2);
         Http::assertSent(fn ($request) => $request->header('User-Agent') === [HttpRunner::DEFAULT_USER_AGENT]);
+        $this->assertStringNotContainsString('Guzzle', HttpRunner::DEFAULT_USER_AGENT);
     }
 
-    public function test_a_missing_key_falls_to_the_floor_too(): void
+    /**
+     * ⚠️ THE WAY BACK, and the reason it is an empty string rather than a missing
+     * key: the package config is merged underneath the app's, so deleting the
+     * line just restores the default. Claiming nothing has to be said out loud.
+     */
+    public function test_an_empty_config_is_the_opt_out_to_the_old_behaviour(): void
+    {
+        config(['larascraper.http_user_agent' => '']);
+        Http::fake(['*' => Http::response('<html></html>', 200)]);
+
+        HttpRunner::on('https://shop.test/x')->run();
+
+        Http::assertSent(fn ($request) => $request->header('User-Agent') === ['GuzzleHttp/7']);
+    }
+
+    public function test_a_missing_key_gets_the_default_rather_than_nothing(): void
     {
         // The whole config replaced by one that never mentions the key.
         config(['larascraper' => ['proxies' => []]]);
@@ -140,12 +152,6 @@ class UserAgentTest extends BaseTestCase
         HttpRunner::on('https://shop.test/x')->run();
 
         Http::assertSent(fn ($request) => $request->header('User-Agent') === [HttpRunner::DEFAULT_USER_AGENT]);
-    }
-
-    public function test_the_floor_is_not_a_script_announcing_itself(): void
-    {
-        $this->assertStringNotContainsString('Guzzle', HttpRunner::DEFAULT_USER_AGENT);
-        $this->assertStringStartsWith('Mozilla/5.0', HttpRunner::DEFAULT_USER_AGENT);
     }
 
     /**
@@ -167,7 +173,7 @@ class UserAgentTest extends BaseTestCase
         Http::assertSent(fn ($request) => $request->header('User-Agent') === ['Pooled/1.0']);
     }
 
-    public function test_the_spiders_concurrent_path_falls_back_like_everything_else(): void
+    public function test_the_spiders_concurrent_path_honours_the_config_too(): void
     {
         config(['larascraper.http_user_agent' => 'Configured/1.0']);
         Http::fake(['*' => Http::response('<html></html>', 200)]);
@@ -264,6 +270,33 @@ class UserAgentTest extends BaseTestCase
 
         // And is removed afterwards, so the same fact is not stated twice.
         $this->assertStringContainsString('delete headers[headerKey]', $script);
+    }
+
+    /**
+     * Not about user agents, but it lives here for the same reason: it pins a
+     * rule that only exists inside scraper.cjs, where no PHP test can reach.
+     *
+     * ⚠️ THE REGRESSION IT GUARDS. submitForm() used to serialise every field's
+     * `value` regardless of state, so a checkbox nobody touched still submitted
+     * its value. On a search form that silently switches on filters the scraper
+     * never asked for — one stray flag narrowed a real result set to nothing,
+     * and the search still looked like it had worked.
+     */
+    public function test_the_script_leaves_unchecked_boxes_out_of_a_submit(): void
+    {
+        $script = file_get_contents(__DIR__ . '/../resources/scraper.cjs');
+
+        $this->assertStringContainsString(
+            "if ((el.type === 'checkbox' || el.type === 'radio') && !el.checked) continue;",
+            $script,
+        );
+
+        // Disabled inputs are not submitted by a browser either.
+        $this->assertStringContainsString('if (el.disabled) continue;', $script);
+
+        // append, not set: a multiple select contributes one entry per option,
+        // and set() would keep only the last.
+        $this->assertStringContainsString('body.append(el.name, el.value);', $script);
     }
 
     public function test_the_script_asks_the_browser_rather_than_naming_a_version(): void

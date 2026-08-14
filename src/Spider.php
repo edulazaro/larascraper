@@ -366,10 +366,11 @@ abstract class Spider
                 // This path builds its own request instead of going through
                 // HttpRunner::run(), so it asks the same resolver rather than
                 // repeating the precedence and drifting from it.
-                $headers = array_merge(
-                    ['User-Agent' => HttpRunner::resolveUserAgent($spec['userAgent'] ?? null)],
-                    $spec['headers'],
-                );
+                $userAgent = HttpRunner::resolveUserAgent($spec['userAgent'] ?? null);
+
+                $headers = $userAgent === null
+                    ? $spec['headers']
+                    : array_merge(['User-Agent' => $userAgent], $spec['headers']);
 
                 $request = $pool->as((string) $key)
                     ->withHeaders($headers)

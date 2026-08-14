@@ -51,17 +51,18 @@ return [
     | only option — and it is HERE, not in the code, so you can bump it without
     | waiting for a release.
     |
-    | It ages. Every scraper property, ->userAgent() call, and explicit
-    | User-Agent header still wins over it.
+    | It ages, which is why it lives here and not in the code: you can bump it
+    | without waiting for a release. Every scraper property, ->userAgent() call,
+    | and explicit User-Agent header still wins over it.
     |
-    | There is no way down to nothing: emptying or removing this key falls back to
-    | HttpRunner::DEFAULT_USER_AGENT rather than sending none, because sending none
-    | is not silence — Guzzle fills in 'GuzzleHttp/7'.
+    | ⚠️ SET IT TO '' TO CLAIM NOTHING. That is not neutral — the HTTP client then
+    | introduces the request as 'GuzzleHttp/7', announcing that a script is
+    | calling — but it is what the package sent before this option existed, so it
+    | is the one line back to the old behaviour if you were relying on it.
     |
     */
 
-    'http_user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        . ' (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+    'http_user_agent' => \EduLazaro\Larascraper\Runners\HttpRunner::DEFAULT_USER_AGENT,
 
     /*
     |--------------------------------------------------------------------------

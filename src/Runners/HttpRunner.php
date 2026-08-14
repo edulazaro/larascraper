@@ -102,24 +102,41 @@ class HttpRunner implements Runner
         . ' (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36';
 
     /**
-     * Settle on a user agent: what the caller chose, else config, else the floor.
+     * Settle on a user agent: what the caller chose, else config, else a browser.
      *
-     * There is deliberately no way down to nothing. Sending none means Guzzle
-     * fills in 'GuzzleHttp/7', which is not a neutral absence — it is an
-     * announcement that a script is calling — so an empty or missing config
-     * reads as "no opinion", not as "say nothing".
+     * There is nobody to ask on this driver — no Chrome launches — so the default
+     * is written out. It is a browser rather than nothing because "nothing" is
+     * not silence: the HTTP client fills in 'GuzzleHttp/7', and a scraping
+     * library whose out-of-the-box request announces itself as a script has a
+     * defect, not a neutral default.
+     *
+     * ⚠️ AN EMPTY CONFIG VALUE MEANS "CLAIM NOTHING", and returns null so no
+     * header is added at all. That is the deliberate way back to what the package
+     * sent before this existed, for anyone who was relying on it. Only an EMPTY
+     * value does that — a missing key still gets the default, since the package
+     * config is merged underneath the app's.
      *
      * @param string|null $explicit What the scraper asked for, if anything.
+     * @return string|null The user agent, or null to send none.
      */
-    public static function resolveUserAgent(?string $explicit = null): string
+    public static function resolveUserAgent(?string $explicit = null): ?string
     {
         if (! empty($explicit)) {
             return $explicit;
         }
 
-        $configured = function_exists('config') ? config('larascraper.http_user_agent') : null;
+        if (! function_exists('config')) {
+            return self::DEFAULT_USER_AGENT;
+        }
 
-        return is_string($configured) && $configured !== '' ? $configured : self::DEFAULT_USER_AGENT;
+        $configured = config('larascraper.http_user_agent', self::DEFAULT_USER_AGENT);
+
+        // '' is an opt-out; anything unusable falls back rather than sending junk.
+        if ($configured === '' || $configured === null) {
+            return null;
+        }
+
+        return is_string($configured) ? $configured : self::DEFAULT_USER_AGENT;
     }
 
     /**
@@ -236,11 +253,13 @@ class HttpRunner implements Runner
     {
         try {
             // An explicit header still outranks it: writing one by hand is a
-            // deliberate act, and this is only a default.
-            $headers = array_merge(
-                ['User-Agent' => static::resolveUserAgent($this->userAgent)],
-                $this->headers,
-            );
+            // deliberate act, and this is only a default. With nothing claimed,
+            // no header is added at all and the client sends what it always did.
+            $userAgent = static::resolveUserAgent($this->userAgent);
+
+            $headers = $userAgent === null
+                ? $this->headers
+                : array_merge(['User-Agent' => $userAgent], $this->headers);
 
             $request = Http::withHeaders($headers)
                 ->timeout((int) max(1, ceil($this->timeout / 1000)));

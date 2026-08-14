@@ -106,7 +106,16 @@ class BuildsActionsTest extends BaseTestCase
             ->submit('form')
             ->getActions();
 
-        $this->assertSame([['type' => 'submit', 'formSelector' => 'form']], $actions);
+        $this->assertSame([['type' => 'submit', 'formSelector' => 'form', 'into' => null, 'native' => false]], $actions);
+    }
+
+    public function test_submit_carries_the_container_to_render_into(): void
+    {
+        $actions = TestScraper::make()->scrape('https://example.com')
+            ->submit('form', ['into' => '#results'])
+            ->getActions();
+
+        $this->assertSame([['type' => 'submit', 'formSelector' => 'form', 'into' => '#results', 'native' => false]], $actions);
     }
 
     public function test_submit_and_capture_still_builds_its_action(): void

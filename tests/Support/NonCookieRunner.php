@@ -50,10 +50,12 @@ class NonCookieRunner implements Runner
         return $this;
     }
 
-    public function userAgent(?string $userAgent): static
-    {
-        return $this;
-    }
+    // NO userAgent() here, deliberately: this doubles as the guard for a custom
+    // runner written before that capability existed. It once WAS declared on the
+    // Runner interface, and this class is where the suite first said so — with a
+    // fatal "must implement the remaining methods", which is exactly what every
+    // third-party runner would have hit on upgrading. Adding the method silenced
+    // the messenger; leaving it out keeps the warning working.
 
     public function withHeaders(array $headers): static
     {

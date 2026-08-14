@@ -479,7 +479,6 @@ class FetchBuilder
 
         $runner = $runnerClass::on($this->url)
             ->timeout($this->timeout)
-            ->userAgent($this->userAgent)
             ->withHeaders($this->headers)
             ->withActions($this->actions)
             ->method($this->httpMethod)
@@ -498,6 +497,12 @@ class FetchBuilder
         }
 
         $runner->cookies($this->cookies, $this->cookieDomain);
+
+        // Optional capability, not part of the Runner contract: a custom runner
+        // that predates it keeps working and is simply never asked.
+        if (method_exists($runner, 'userAgent')) {
+            $runner->userAgent($this->userAgent);
+        }
 
         $throttle = new Throttle($this->throttleKey ?? $host);
 
@@ -675,6 +680,7 @@ class FetchBuilder
             file: $file,
             contentType: $response['contentType'] ?? null,
             cookies: $response['cookies'] ?? [],
+            diagnostics: $response['diagnostics'] ?? [],
         );
 
         // Make it reachable as $this->request inside the scraper, and memoize.
